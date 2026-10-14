@@ -46,14 +46,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def require_loopback(host: str) -> None:
+def is_loopback(host: str) -> bool:
     if host in LOOPBACK_NAMES:
-        return
+        return True
     try:
-        address = ipaddress.ip_address(host)
-    except ValueError as error:
-        raise LaunchError(f"refusing to bind to {host!r}: this service binds to loopback only") from error
-    if not address.is_loopback:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def require_loopback(host: str) -> None:
+    if not is_loopback(host):
         raise LaunchError(f"refusing to bind to {host!r}: this service binds to loopback only")
 
 

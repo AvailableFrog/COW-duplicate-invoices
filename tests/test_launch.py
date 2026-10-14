@@ -10,8 +10,8 @@ from conftest import REPO_ROOT, WORKBOOK, boot, launch_command, shutdown
 FRONTEND_INDEX = REPO_ROOT / "frontend" / "dist" / "index.html"
 
 
-def run_launch(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(launch_command(WORKBOOK, *args), capture_output=True, text=True, timeout=60, cwd=REPO_ROOT)
+def run_launch(*args: str, workbook: Path = WORKBOOK) -> subprocess.CompletedProcess:
+    return subprocess.run(launch_command(workbook, *args), capture_output=True, text=True, timeout=60, cwd=REPO_ROOT)
 
 
 def test_listens_on_loopback(app):
@@ -27,10 +27,7 @@ def test_refuses_to_bind_to_a_non_loopback_address():
 
 
 def test_missing_workbook_is_refused_with_a_specific_message(tmp_path):
-    result = subprocess.run(
-        launch_command(tmp_path / "nowhere.xlsx", "--port", "0", "--data-dir", str(tmp_path)),
-        capture_output=True, text=True, timeout=60, cwd=REPO_ROOT,
-    )
+    result = run_launch("--port", "0", "--data-dir", str(tmp_path), workbook=tmp_path / "nowhere.xlsx")
 
     assert result.returncode == 2
     assert "nowhere.xlsx" in result.stderr
@@ -44,6 +41,13 @@ def test_as_of_date_can_be_set_at_launch(tmp_path):
         shutdown(booted)
 
     assert body["as_of"] == {**body["as_of"], "date": "2026-10-01", "is_assumption": True}
+
+
+def test_unknown_api_path_is_a_json_not_found_not_the_frontend(app):
+    response = app.get("/api/no-such-thing")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
 
 
 def test_root_serves_html_from_the_same_port(app):

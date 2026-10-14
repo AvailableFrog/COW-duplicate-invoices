@@ -74,6 +74,8 @@ def create_app(state: AppState) -> FastAPI:
 
         @app.get("/{path:path}", include_in_schema=False)
         def frontend(path: str) -> FileResponse:
+            if path == "api" or path.startswith("api/"):
+                raise HTTPException(status_code=404, detail=f"no such API path: /{path}")
             candidate = (state.frontend_dist / path).resolve()
             if path and candidate.is_file() and state.frontend_dist.resolve() in candidate.parents:
                 return FileResponse(candidate)

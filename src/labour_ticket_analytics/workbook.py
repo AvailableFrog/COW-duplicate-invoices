@@ -111,11 +111,15 @@ def _header_name(value: Any, index: int) -> str:
 
 
 def _read_tickets(rows, fields: tuple[str, ...]) -> list[Ticket]:
+    """One Ticket per sheet row after the header, in sheet order.
+
+    The Excel row comes from the position in the sheet, not from a cell: a
+    fully blank row yields placeholder cells with no row attribute, and it
+    must still be preserved as a Ticket so later rows keep their numbers.
+    Only trailing blank rows, which carry nothing, are dropped.
+    """
     tickets: list[Ticket] = []
-    for row in rows:
-        excel_row = row[0].row if row else None
-        if excel_row is None:
-            continue
+    for excel_row, row in enumerate(rows, start=FIRST_DATA_ROW):
         cells = tuple(
             _read_cell(fields[position], position, row[position] if position < len(row) else None)
             for position in range(len(fields))
@@ -127,7 +131,7 @@ def _read_tickets(rows, fields: tuple[str, ...]) -> list[Ticket]:
 
 
 def _read_cell(field_name: str, position: int, cell) -> Cell:
-    if cell is None:
+    if cell is None or getattr(cell, "value", None) is None:
         return Cell(field_name, position, "blank", None, None)
     raw_type, value = classify(cell.value, getattr(cell, "data_type", None))
     number_format = getattr(cell, "number_format", None) if raw_type != "blank" else None

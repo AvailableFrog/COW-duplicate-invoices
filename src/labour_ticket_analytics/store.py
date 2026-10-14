@@ -182,35 +182,37 @@ class SnapshotStore:
         }
 
 
+# Which storage column holds a cell's value, by raw type. Types not listed
+# (str, formula, error, date, time, duration) are kept as text; "blank" has no value.
+VALUE_COLUMN_BY_RAW_TYPE = {
+    "bool": "value_boolean",
+    "int": "value_integer",
+    "float": "value_number",
+    "datetime": "value_timestamp",
+}
+VALUE_COLUMNS = ("value_text", "value_integer", "value_number", "value_boolean", "value_timestamp")
+
+
+def _value_column(raw_type: str) -> str | None:
+    if raw_type == "blank":
+        return None
+    return VALUE_COLUMN_BY_RAW_TYPE.get(raw_type, "value_text")
+
+
 def _cell_row(fingerprint: str, excel_row: int, cell: Cell) -> tuple[Any, ...]:
-    text = integer = number = boolean = timestamp = None
-    value = cell.value
-    match cell.raw_type:
-        case "bool":
-            boolean = value
-        case "int":
-            integer = value
-        case "float":
-            number = value
-        case "datetime":
-            timestamp = value
-        case "date" | "time" | "duration":
-            text = value.isoformat() if hasattr(value, "isoformat") else str(value)
-        case "blank":
-            pass
-        case _:
-            text = value
+    values: dict[str, Any] = dict.fromkeys(VALUE_COLUMNS)
+    column = _value_column(cell.raw_type)
+    if column == "value_text" and cell.raw_type in ("date", "time", "duration"):
+        values[column] = cell.value.isoformat() if hasattr(cell.value, "isoformat") else str(cell.value)
+    elif column is not None:
+        values[column] = cell.value
     return (
         fingerprint,
         excel_row,
         cell.position,
         cell.field,
         cell.raw_type,
-        text,
-        integer,
-        number,
-        boolean,
-        timestamp,
+        *(values[name] for name in VALUE_COLUMNS),
         cell.number_format,
     )
 
@@ -222,20 +224,12 @@ def _json_default(value: Any) -> str:
 
 
 def _cell_payload(row: tuple[Any, ...]) -> dict[str, Any]:
-    field_name, position, raw_type, text, integer, number, boolean, timestamp, number_format = row
-    match raw_type:
-        case "bool":
-            value: Any = boolean
-        case "int":
-            value = integer
-        case "float":
-            value = number
-        case "datetime":
-            value = timestamp.isoformat() if isinstance(timestamp, dt.datetime) else timestamp
-        case "blank":
-            value = None
-        case _:
-            value = text
+    field_name, position, raw_type, *stored, number_format = row
+    values = dict(zip(VALUE_COLUMNS, stored))
+    column = _value_column(raw_type)
+    value = values[column] if column is not None else None
+    if isinstance(value, dt.datetime):
+        value = value.isoformat()
     return {
         "field": field_name,
         "position": position,
