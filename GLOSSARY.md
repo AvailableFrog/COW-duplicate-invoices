@@ -1,6 +1,6 @@
 # Labour Ticket Analytics
 
-The language for reviewing C.O. Williams labour-ticket exports: what the spreadsheet records, what matching rules propose, and what a reviewer has judged. The three are kept apart on purpose.
+The language for reviewing C.O. Williams labour-ticket exports: what the spreadsheet records, what matching rules find, and what a reviewer has judged. Screens use the plain duplicate language Oliver uses; the analytical terms below sit behind them.
 
 ## Language
 
@@ -14,19 +14,23 @@ _Avoid_: row, record, invoice, claim
 One imported workbook, identified by its content fingerprint. A newer export is a new Snapshot, never extra Tickets in an old one.
 _Avoid_: dataset, export, import, file
 
-**Recorded Marker**:
-A Ticket whose Approval Status is Approved and whose Job Number is 0. Oliver described these as "more than likely a duplicate"; the term asserts nothing about detection or payment.
-_Avoid_: detected duplicate, caught duplicate, marked duplicate, Job 0
+**Flagged Duplicate**:
+A Ticket that staff flagged as a duplicate by approving it with Job Number 0. The flag is a fact about what staff did; whether the analysis agrees is shown beside it, never folded into the name.
+_Avoid_: recorded marker, Job 0, detected duplicate, rejected duplicate
 
 ### Analysis
 
-**Candidate**:
-A relationship between two Tickets that a matching rule proposed, carrying the rule, the fields compared, and the strength of the matching evidence. Strength says nothing about payment or intent.
-_Avoid_: duplicate, match, hit, flag
+**Possible Duplicate**:
+A set of Tickets the matching rules found that may repeat one another, opened and reviewed as one item. It may include a Flagged Duplicate and the ticket it appears to repeat.
+_Avoid_: case, group, cluster, candidate group, suspected fraud
 
-**Case**:
-The connected set of Candidates within one employee-and-date context. The unit a reviewer opens; membership does not mean every member repeats every other.
-_Avoid_: group, pair, cluster, incident
+**Exact Repeat**:
+A Possible Duplicate in which every claim field matches: employee, date, job, time, and all four hour and pay amounts.
+_Avoid_: strict match, identical ticket, clear duplicate
+
+**Candidate**:
+One link between two Tickets inside a Possible Duplicate, carrying the rule that found it and the fields compared. An analytical term; screens show the reason in words instead.
+_Avoid_: match, hit, flag
 
 **Confident Interval**:
 A work period parsed from a Ticket's Time text with no assumption needed: explicit AM/PM or 24-hour form. Only Confident Intervals can establish overlap or separation.
@@ -41,20 +45,33 @@ The single documented working-day interpretation shown for an Ambiguous Interval
 _Avoid_: corrected time, fixed time, inferred time
 
 **Annotation**:
-A note attached to a Ticket by ticket number from the evidence report: its example letter, the consultant's review note, and the question for Oliver. Annotations are displayed on evidence and never used by matching rules.
+A note attached to a Ticket by ticket number from the evidence report: its example letter, the consultant's review note, and the question for Oliver. Shown on evidence and never used to find Possible Duplicates.
 _Avoid_: example, hardcoded case
 
 ### Review
 
 **Review Outcome**:
-A reviewer's local judgement on a Case or Candidate: unreviewed, confirmed repeat, legitimate separate work, correction or replacement, or unresolved. Recorded outside the source and never written back.
-_Avoid_: decision, verdict, status, disposition
+A reviewer's judgement on a Possible Duplicate, kept in this app and never written back to the company's system. One of: Not reviewed, Confirmed duplicate, Not a duplicate, Replacement ticket, or Needs follow-up.
+_Avoid_: verdict, status, disposition
+
+**Confirmed Duplicate**:
+A Review Outcome stating that the Tickets repeat the same claim. It says nothing about whether anyone was paid twice.
+_Avoid_: confirmed repeat, proven duplicate, double payment
+
+**Replacement Ticket**:
+A Review Outcome stating that one Ticket corrects or supersedes another, with the kept and replaced Tickets linked.
+_Avoid_: correction, resubmission, superseded claim
 
 **Alias**:
-A reviewer-confirmed statement that two employee labels name one person. Until confirmed, a proposed alias is only a Candidate.
+A reviewer-confirmed statement that two employee labels name one person, such as "Mario Collymore" and "Mariocollymore". Until confirmed it is only a suggestion.
 _Avoid_: merge, same person, fuzzy match, identity match
 
-### Banned
+### Never claimed
 
-**duplicate**:
-Not used in code, UI, tickets, or docs except when quoting Oliver's email. Say Recorded Marker, Candidate, Case, or confirmed repeat instead.
+**Paid twice**:
+Not said anywhere. The export holds no payment records, so no screen may claim a payment was made, stopped, or made twice. Say Flagged duplicate, Exact repeat or Confirmed duplicate instead.
+_Avoid_: double payment, loss, overpayment, fraud
+
+**Missed duplicate**:
+Not said for an unflagged Exact Repeat. Staff may have handled it somewhere the export cannot show; say "Exact repeat, not flagged".
+_Avoid_: undetected duplicate, slipped through

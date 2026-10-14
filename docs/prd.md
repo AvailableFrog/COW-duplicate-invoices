@@ -4,7 +4,7 @@ C.O. Williams Construction Ltd. | Version 1.1 | 14 October 2026 | Revised after 
 
 Version 1.1 supersedes v1.0, kept unchanged at `docs/source/labour-ticket-analytics-prd-v1.0.md`.
 Every change is listed in `docs/decision-log.md` with its reason and the ADR or review answer behind it.
-Vocabulary follows `GLOSSARY.md`; the bare word "duplicate" appears below only when quoting Oliver.
+Screens use the plain duplicate language Oliver uses (see "Display language" in section 3); `GLOSSARY.md` holds the full vocabulary.
 
 ## 1. Product decision
 
@@ -75,18 +75,35 @@ The supplied snapshot contains 2,836 records and 22 columns.
 | No payment transaction, paid amount, paid date, or explicit duplicate-review outcome | Actual savings, paid duplicates, precision, and recall cannot be established from this export |
 
 Oliver described Approved / Job Number 0 as a record that was “more than likely a duplicate.”
-Call this a **recorded duplicate marker**, with that qualification visible in its definition.
-Do not label it “correctly detected” until there is an explicit verified decision.
-Do not label a nonzero Approved/Keyed candidate “paid twice.”
+Call this a **flagged duplicate** on every screen: to Oliver, that is exactly what it is.
+The flag is shown as a fact about what staff did; where the analysis disagrees, say so beside the flag, for example “Flagged duplicate · no matching ticket found.”
+Do not label any ticket “paid twice”: the export holds no payment records.
 Pending does not prove either that nobody reviewed a ticket or that a warning caught it.
 
 Keep three separate facts throughout the product:
 
 1. **Source state:** approval status, Keyed, and current Job Number.
 2. **Analytical evidence:** matching fields, overlap, text variants, conflicting claims, and parsing uncertainty.
-3. **Local review outcome:** unreviewed, confirmed repeat, legitimate separate work, correction/replacement, or unresolved, with reviewer, date, note, and supporting reference.
+3. **Local review outcome:** Not reviewed, Confirmed duplicate, Not a duplicate, Replacement ticket, or Needs follow-up, with reviewer, date, note, and supporting reference.
 
-A confirmed repeat is still not a confirmed duplicate payment.
+A confirmed duplicate is still not a confirmed duplicate payment.
+
+### Display language
+
+The dashboard is for Oliver and accounts staff, so every label must be immediately clear to them.
+
+| On screen | What it means |
+|---|---|
+| Flagged duplicate | Approved with Job Number 0: staff flagged the ticket as a duplicate |
+| Possible duplicate | Tickets the analysis found that may repeat each other, opened and reviewed together |
+| Exact repeat, not flagged | A possible duplicate where every claim field matches and no ticket is flagged |
+| Confirmed duplicate | The reviewer agrees the tickets repeat the same claim |
+| Not a duplicate | The reviewer judged the tickets to be separate work |
+| Replacement ticket | One ticket corrects or replaces another; both are linked |
+| Not reviewed / Needs follow-up | No judgement yet, or a question remains open |
+
+Each possible duplicate states its reason in words, such as “same claim submitted twice,” “times overlap,” or “same task payment on both.”
+Never shown: “paid twice,” “fraud,” or “missed duplicate,” because the export cannot show payment or whether a ticket was handled elsewhere.
 Payment verification requires accounting evidence beyond this workbook.
 Local review notes must never overwrite source values or imply a decision was made in the company's system.
 
@@ -101,7 +118,7 @@ Avoid a pie chart partitioning all tickets into “duplicates / not duplicates�
 | Priority | View | What it answers | Representation and interaction |
 |---|---|---|---|
 | P0 | Review priorities | Which apparent repeats or conflicting claims warrant inspection? | Ranked case list beside a pattern-by-source-state count matrix; click opens comparison |
-| P0 | Recorded markers | Which records were probably handled as duplicates, and can we identify the retained claim? | 28-record tile and filter; counterpart found / unresolved relationship shown separately |
+| P0 | Flagged duplicates | Which tickets did staff flag as duplicates, and can we identify the retained claim? | 28-record tile and filter; counterpart found / unresolved relationship shown separately |
 | P0 | Processing queue | What is Pending, or Approved but not Keyed, and how old are those submissions? | Separate horizontal age-bucket bars; click reveals tickets and dates |
 | P0 | Data readiness | Which records cannot be reliably compared or valued? | Compact issue counts for ambiguous times, anomalous dates, unresolved identity, missing rates, and missing required fields |
 | P1 | Claimed work by job | Where are the reported hours concentrated? | Top-ten horizontal bars, explicit Other category, optional employee-label count or ticket count |
@@ -111,13 +128,13 @@ Avoid a pie chart partitioning all tickets into “duplicates / not duplicates�
 Release one ships all four P0 views and the P1 value-context panel.
 The two remaining P1 charts ship in release 1.1; P0 still identifies build order within release one.
 
-**Initial tiles:** 2,836 source records; 28 recorded markers; 4 strict unmarked candidate cases involving 8 Approved/Keyed tickets; 129 Pending; 149 Approved/not-Keyed.
-Label the four cases as “strict matching candidates,” not all missed duplicates.
+**Initial tiles:** 2,836 tickets; 28 flagged duplicates; 4 exact repeats not flagged, involving 8 Approved/Keyed tickets; 129 Pending; 149 Approved/not-Keyed.
+Label the four as “exact repeats, not flagged,” never “missed duplicates”: whether staff caught them elsewhere is a question for Oliver.
 Other rules will produce additional, less certain candidates.
-The marker tile counts records; the candidate tile counts cases and shows its ticket count explicitly.
+The flagged tile counts tickets; the exact-repeat tile counts possible duplicates and shows its ticket count explicitly.
 These tiles overlap conceptually and are not intended to sum to the population.
 
-**Priority ordering:** unmarked strong candidates where all members are Approved/Keyed first, mixed Approved/Pending cases next, then pending conflicts and marked cases with unresolved counterparts.
+**Priority ordering:** unflagged exact repeats where all members are Approved/Keyed first, mixed Approved/Pending cases next, then pending conflicts and flagged duplicates with unresolved counterparts.
 Within a tier sort by oldest Created timestamp; ties break on the lowest Ticket Number.
 This is review priority, not a probability of wrongdoing.
 Do not rank employees or supervisors by suspected fraud.
@@ -131,8 +148,8 @@ Each percentage must expose numerator and denominator.
 | Metric ID | Definition and important limits |
 |---|---|
 | `ticket_count` | Number of source records in the active snapshot and filters; unique IDs are validated rather than assumed |
-| `marked_ticket_count` | Approval Status = Approved AND numeric Job Number = 0; counts tickets, not confirmed duplicate cases |
-| `strict_unmarked_case_count` | Strict equality groups defined in section 5, with no marker and every member Approved/Keyed; counts groups |
+| `flagged_duplicate_count` | Approval Status = Approved AND numeric Job Number = 0; counts tickets, not confirmed duplicates |
+| `unflagged_exact_repeat_count` | Strict equality groups defined in section 5, with no flagged duplicate and every member Approved/Keyed; counts groups |
 | `candidate_ticket_count` | Distinct source records participating in the selected analytical rules; union records before counting |
 | `pending_count` | Approval Status = Pending, regardless of Keyed value |
 | `approved_not_keyed_count` | Approved AND Keyed = false; unknown Keyed is a separate quality issue |
@@ -165,11 +182,11 @@ Confidence means strength of matching evidence, not confidence that someone was 
 
 | Pattern | Examples and source rows | First-release handling | Question the case should help settle |
 |---|---|---|---|
-| 1. Same claim appears twice | C Peter 620/855; D Latoya 974/1868; E Samantha 1309/1656; F Mario 2206/2351 | Strict matching groups; prioritize unmarked Approved/Keyed cases | Missed, handled elsewhere, or excluded before payment? |
+| 1. Same claim appears twice | C Peter 620/855; D Latoya 974/1868; E Samantha 1309/1656; F Mario 2206/2351 | Strict matching groups; prioritize unflagged Approved/Keyed exact repeats | Missed, handled elsewhere, or excluded before payment? |
 | 2. Same claim looks different as text | G Kerriann 82/103; H Mario 829/1072 | Normalize time syntax; propose name aliases without silently merging identities | Did the existing warning see these, and what happened next? |
 | 3. Possible correction or resubmission | J Orlando 61/105; I Damar 318/1545/999; K Errol 2188/2187 | Flag overlaps and changed claim fields; show chronology and supervisor changes | Which claim is valid, and can a replacement leave two active claims? |
 | 4. Equal duration, separate periods | B Patrick 33/79; A Romarian 591/593; L Weston 2151/2152 | Explain non-overlap when time interpretation is reliable; retain ambiguous cases for review | Does the current process distinguish separate work, and what is the intended submission unit? |
-| 5. Repeated payment component | M Weston 1575/2149 | Flag matching Job Work Pay as a component comparison, not proof of a repeated whole ticket | Why are both marked, and where is the valid entitlement? |
+| 5. Repeated payment component | M Weston 1575/2149 | Flag matching Job Work Pay as a component comparison, not proof of a repeated whole ticket | Why are both flagged, and where is the valid entitlement? |
 | 6. Service date in description | N Toyna 1727/1728 | Surface conflict between Date and explicit date references; retain text and uncertainty | Which service date and earlier claim history should the check use? |
 
 **Strict equality baseline:** group by Employee after trim/case-fold/collapse-whitespace, Date as recorded, Job Number, Time after the same basic text normalization, and the four claim components Regular Hours, Overtime, Double Time, Job Work Pay.
@@ -203,21 +220,21 @@ Occupation changes must not automatically split a person's history or prove iden
 
 **Dates and job identifiers:** same employee/date is a candidate search space, not a duplicate rule.
 Allow cross-job comparisons for overlap and replacement investigations.
-An overwritten Job Number 0 cannot reveal the original job; do not require the marker's current job number to match its counterpart.
+An overwritten Job Number 0 cannot reveal the original job; do not require the flagged ticket's current job number to match its counterpart.
 Never recover an original job number as fact merely from matching Job Name.
 Description dates can suggest a discrepancy but cannot overwrite Date automatically.
 
 **Cases and counting:** maintain source records, pairwise relationships, and review cases separately.
 For general matching, a case is a connected set of candidate relationships within an employee/date context, with every edge visible.
 Transitive connectivity does not mean all members repeat one another.
-A Case's display identifier is derived from its sorted member ticket numbers (for example "Case L225526+L225761"), so it is stable across runs of one Snapshot and readable aloud in a meeting; it is not a storage key.
+A Possible Duplicate's display identifier is derived from its sorted member ticket numbers (for example "Possible duplicate L225526+L225761"), so it is stable across runs of one Snapshot and readable aloud in a meeting; it is not a storage key.
 For example, a long claim may overlap two legitimate separate shifts; the app must not assume only one ticket can survive.
 Strict equality groups can use `n - 1` only as an explicitly hypothetical redundant-record count.
 Do not apply that formula to general overlap components.
 
 Pattern filters are multi-label and must say their counts overlap.
 A distinct-case total uses union case IDs; a distinct-ticket total uses union source IDs.
-Cases with mixed statuses retain their member-level breakdown instead of being forced into “paid / unpaid.”
+Possible duplicates with mixed statuses retain their member-level breakdown instead of being forced into “paid / unpaid.”
 Only reviewed retained/replaced relationships support exclusion from an adjusted claim total.
 
 ### Conservative first-release predicates
@@ -233,7 +250,7 @@ Rules may share records and must expose their individual reasons.
 | Name-space variant | Names match after removing whitespace and case-folding, and Date, Job Number, normalized Time, and four claim components match; propose an alias relationship but do not merge employee keys |
 | Work-period conflict | Same normalized employee or confirmed alias and same Date, with a positive intersection of confidently parsed interval sets; allow different jobs and claim components |
 | Ambiguous-period comparison | Same employee, Date, and nonzero job, with matching four claim components and distinct unresolved Time strings; surface for time review without claiming overlap until the interpretation is confirmed |
-| Marker counterpart | At least one record has the marker; same employee or confirmed alias and Date, plus either the same complete claim-component vector, identical confidently parsed periods, or identical nonempty unresolved Time text and identical nonempty description after basic case/whitespace normalization; the last path is an uncertain counterpart comparison, as in K; ignore current job equality and return all plausible counterparts, not an automatically selected original |
+| Flagged-duplicate counterpart | At least one record is a flagged duplicate; same employee or confirmed alias and Date, plus either the same complete claim-component vector, identical confidently parsed periods, or identical nonempty unresolved Time text and identical nonempty description after basic case/whitespace normalization; the last path is an uncertain counterpart comparison, as in K; ignore current job equality and return all plausible counterparts, not an automatically selected original |
 | Repeated component | Same employee or confirmed alias, same Date, equal positive Job Work Pay, and either the same nonzero job or at least one Job 0; label a low-confidence component comparison, not a duplicate entitlement |
 | Description-date exception | An explicit service-date reference in description differs from Date; preserve the extracted text span and interpretation, flag an omitted year as uncertain, and do not create a duplicate edge solely from this exception |
 
@@ -244,7 +261,7 @@ Rules produce an explainable candidate queue; they do not establish every possib
 ### Local review controls
 
 The evidence drawer lets a user choose a local Review Outcome, enter a note/reference, confirm or reject a proposed Alias, and link a replaced ticket to one or more retained tickets.
-A Review Outcome attaches to the order-independent pair of Tickets behind a Candidate, and a retained/replaced link attaches to individual Tickets; a Case displays the outcomes of its member pairs and is never the key (ADR 0004).
+A Review Outcome attaches to the order-independent pair of Tickets behind a Candidate, and a retained/replaced link attaches to individual Tickets; a Possible Duplicate displays the outcomes of its member pairs and is never the key (ADR 0004).
 Do not force a single retained ticket when the evidence supports several legitimate periods or components.
 Saving or revising a decision records reviewer label, timestamp, previous value, new value, and rationale in local history.
 Require an explicit retained/excluded relationship before affecting an adjusted total; an unresolved note alone has no numerical effect.
@@ -262,7 +279,7 @@ LABOUR TICKETS          Workbook / snapshot / as-of assumption     Import
 Overview | Ask the data                 Definitions | Saved views
 
 Date basis [Created]  Range [All]  Job [All]  Status [All]  Clear
-Records 2,836 | Markers 28 | Strict cases 4 / 8 tickets | Pending 129
+Tickets 2,836 | Flagged duplicates 28 | Exact repeats not flagged 4 / 8 tickets | Pending 129
 
 REVIEW PRIORITIES                         PROCESSING QUEUE
 Pattern / evidence / member states       Pending submission age
@@ -281,12 +298,12 @@ Preserve all 22 source columns, including whitespace and description line breaks
 Show Excel row and original dataframe index, workbook fingerprint, and sheet.
 Offer an optional “show whitespace” display for G/H, without altering the source text.
 Show original review notes and Oliver questions alongside their examples, not in a disconnected question appendix.
-They ship as Annotations in a small file keyed by ticket number carrying the A-N letter, the condensed note, and the Oliver question; the drawer displays them when a rule-generated Case contains those Tickets, and matching never reads them.
+They ship as Annotations in a small file keyed by ticket number carrying the A-N letter, the condensed note, and the Oliver question; the drawer displays them when a rule-generated Possible Duplicate contains those Tickets, and matching never reads them.
 F must explicitly remain distinguishable from H, although both involve Mario.
 
 Every chart supports View data and source-row drilldown, with aggregation grain and active filters visible.
 Show total contributing records and any excluded or unpriced records.
-Case filters may select a case because one member matches; then show all members, with out-of-filter members labeled so comparisons are not truncated.
+Filters may select a possible duplicate because one member matches; then show all members, with out-of-filter members labeled so comparisons are not truncated.
 Aggregate ticket charts still use only in-filter tickets, not those added for comparison context.
 Saved views are release two; when added they retain their snapshot, filter state, metric/rule versions, and reviewed alias configuration.
 
@@ -329,7 +346,7 @@ On entering the tab, offer “Use Overview filters” or “Start with all data�
 Changing snapshots invalidates results until rerun.
 
 Clarify only when ambiguity materially changes the answer.
-For “duplicates by supervisor,” ask whether the user means recorded markers, strict candidates, or reviewed repeats.
+For “duplicates by supervisor,” ask whether the user means flagged duplicates, possible duplicates, or confirmed duplicates.
 For “money lost to duplicates,” explain that payment evidence is missing and offer the labeled base-value scenario.
 Do not substitute an easier question silently.
 If no supported interpretation exists, show a clear limitation and relevant alternatives rather than inventing a graph.
@@ -359,8 +376,8 @@ Follow up: [Only those submitted more than seven days ago...]
 |---|---|
 | Show ticket counts by approval status. | Bar chart: 2,611 Approved, 129 Pending, 96 Rejected with all-data filters |
 | Show approved tickets split by keyed status. | Bar chart: 2,462 true and 149 false |
-| Show the strict unmarked duplicate candidates by employee. | Four case bars for C-F, labeled candidate cases; drilldown contains eight tickets |
-| Compare recorded duplicate markers with strong unmarked candidates. | Separate panels or explicitly labeled units: 28 marked tickets versus four candidate cases; no additive pie |
+| Show the exact repeats that were not flagged, by employee. | Four bars for C-F labeled “exact repeats, not flagged”; drilldown contains eight tickets |
+| Compare flagged duplicates with exact repeats that were not flagged. | Separate panels or explicitly labeled units: 28 flagged tickets versus four possible duplicates; no additive pie |
 | Which pending tickets have waited longest? | Sorted table of age since Created as of the selected date, with optional age histogram |
 | Make a bar chart of pending tickets by supervisor. | Ticket-count bars; no claim about supervisor performance or who caused a delay |
 | Show claimed hours for the ten busiest jobs. | Explain “busiest” as most claimed hours, use the documented Approved/nonzero default, display Other and scope |
@@ -458,12 +475,12 @@ With all source records selected, including Rejected:
 | Measure | BBD | Interpretation |
 |---|---:|---|
 | Known base-value components | 341,477.32 | Partial valuation of submissions, not total paid or total liability |
-| Base value of 28 marked records | 3,399.71 | Value attached to likely duplicate markers, not verified savings |
+| Base value of 28 flagged duplicates | 3,399.71 | Value of tickets staff flagged as duplicates, not verified savings |
 | One extra claim per strict pair C-F | 571.37 | Hypothetical excess if one whole claim per pair was unnecessary, not confirmed loss |
 
 The missing-rate labour is 881 hours across 122 Pending tickets.
 Known Job Work Pay on those records remains included in the known-component total.
-Do not substitute a zero rate, infer a rate from another person, or sum marked and unmarked scenarios as total savings.
+Do not substitute a zero rate, infer a rate from another person, or sum flagged and unflagged scenarios as total savings.
 Do not calculate general overlap-case excess without identifying retained entitlements and repeated components.
 
 ## 10. Consequential questions for Oliver
@@ -475,7 +492,7 @@ Answers should update a documented semantic configuration and, where necessary, 
 | Clarification | Examples | What changes after the answer |
 |---|---|---|
 | Which checks are automated, what does the red warning do, and where is the human disposition saved? | C, G, H | Whether the gap is matching, workflow enforcement, or observability |
-| Does Approved/Job 0 always mean a duplicate, and how is the retained ticket/payment linked? | I, K, M | Marker interpretation and validated outcomes, including potential incorrect exclusions |
+| Does Approved/Job 0 always mean a duplicate, and how is the retained ticket/payment linked? | I, K, M | Flag interpretation and validated outcomes, including potential incorrect exclusions |
 | What do Keyed, Pending, and Modified By mean operationally? | C, H, J | Processing labels and what can be inferred from the export |
 | Can workers correct, cancel, or resubmit to a different supervisor? | J, I | Replacement relationships and cross-reviewer visibility |
 | Is submission intended per day, per job, or per work period? | B, A, L | Validation rules and the form structure that would prevent ambiguity |
@@ -503,14 +520,14 @@ Those additions would permit stronger outcome metrics than this snapshot support
 
 ### Data and analytical correctness
 
-1. Import the supplied workbook and reproduce 2,836 rows, 22 fields, all status/keyed counts, and 28 markers without hardcoded summary values.
+1. Import the supplied workbook and reproduce 2,836 rows, 22 fields, all status/keyed counts, and 28 flagged duplicates without hardcoded summary values.
 2. Reproduce the strict baseline's 34 two-record groups and the four priority C-F cases; show reasons and member states.
 3. Preserve all 638 source-cell values in the report's 14 comparisons, including the F/H distinction and G's whitespace difference.
 4. For A, identify separate intervals; for B, surface absent AM/PM assumptions; for L, parse the interval union without a false overlap across the middle gap.
 5. For J, surface the ambiguous-period comparison and show its apparent overlap under a displayed afternoon interpretation; do not assert resolved overlap from missing AM/PM or treat Orlando's separate morning HR ticket, row 137, as the same work solely because its hours match.
 6. For H, show the Pending record was created before the Approved record; for M, show that the no-hours record was created later, not an earlier incomplete submission.
 7. For I, include Rejected row 999 as context linking descriptions; for N, preserve the distinct dates in description and avoid declaring duplication on Date alone.
-   For K, produce an uncertain marker-counterpart relationship despite changed hour components, preserving the unresolved AM/PM interpretation.
+   For K, produce an uncertain flagged-duplicate counterpart relationship despite changed hour components, preserving the unresolved AM/PM interpretation.
 8. Test a three-ticket case where one interval overlaps two non-overlapping intervals; do not infer that two records are redundant merely from connectivity.
 9. Reconcile BBD 341,477.32, 3,399.71, and 571.37 under the stated formula; show missing-rate coverage and never label these as actual payments.
 10. Verify that every graph's drilldown reproduces its total and honors the same filters, snapshot, and metric version.
