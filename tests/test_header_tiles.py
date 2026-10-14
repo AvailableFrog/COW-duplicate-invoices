@@ -10,7 +10,7 @@ def test_tiles_reproduce_the_published_counts_on_all_data(app):
 
     assert [(tile["label"], tile["value"]) for tile in body["tiles"]] == [
         ("Source records", 2836),
-        ("Recorded Markers", 28),
+        ("Flagged duplicates", 28),
         ("Exact repeats, not flagged", 4),
         ("Pending", 129),
         ("Approved, not Keyed", 149),
@@ -24,11 +24,11 @@ def test_tiles_state_that_they_overlap_and_do_not_sum(app):
     assert "do not sum" in body["note"]
 
 
-def test_the_marker_tile_carries_olivers_qualification_in_its_definition(app):
+def test_the_flagged_duplicate_tile_carries_olivers_qualification_in_its_definition(app):
     tiles = {tile["metric_id"]: tile for tile in app.get("/api/overview/tiles").json()["tiles"]}
 
-    assert "more than likely" in tiles["marked_ticket_count"]["definition"]
-    assert "Approved" in tiles["marked_ticket_count"]["definition"]
+    assert "more than likely" in tiles["flagged_duplicate_count"]["definition"]
+    assert "Approved" in tiles["flagged_duplicate_count"]["definition"]
 
 
 def test_status_breakdown_and_keyed_split_are_available_through_the_registry(app):
@@ -48,23 +48,23 @@ def test_a_status_filter_narrows_every_tile_consistently(app):
     rejected = tile_values(app.get("/api/overview/tiles", params={"status": "Rejected"}).json())
 
     assert pending == {
-        "ticket_count": 129, "marked_ticket_count": 0, "unflagged_exact_repeat_count": 0,
+        "ticket_count": 129, "flagged_duplicate_count": 0, "unflagged_exact_repeat_count": 0,
         "pending_count": 129, "approved_not_keyed_count": 0,
     }
     assert approved == {
-        "ticket_count": 2611, "marked_ticket_count": 28, "unflagged_exact_repeat_count": 4,
+        "ticket_count": 2611, "flagged_duplicate_count": 28, "unflagged_exact_repeat_count": 4,
         "pending_count": 0, "approved_not_keyed_count": 149,
     }
     assert rejected["ticket_count"] == 96
 
 
 def test_a_job_filter_narrows_the_tiles_to_that_job(app):
-    marker_job = tile_values(app.get("/api/overview/tiles", params={"job": 0}).json())
+    job_zero = tile_values(app.get("/api/overview/tiles", params={"job": 0}).json())
     busiest_job = tile_values(app.get("/api/overview/tiles", params={"job": 40972}).json())
 
-    assert marker_job["marked_ticket_count"] == 28
+    assert job_zero["flagged_duplicate_count"] == 28
     assert busiest_job["ticket_count"] == 356
-    assert busiest_job["marked_ticket_count"] == 0
+    assert busiest_job["flagged_duplicate_count"] == 0
 
 
 def test_a_date_range_names_its_basis_and_disjoint_ranges_partition_the_records(app):
