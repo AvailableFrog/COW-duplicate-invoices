@@ -32,7 +32,8 @@ uv run labour-ticket-analytics "data/Labour Tickets Export.xlsx"
 Then open the printed address, by default `http://127.0.0.1:8765`.
 The header shows the Snapshot fingerprint (SHA-256 of the workbook), the sheet name, the row and field counts, the import issues, and the analytical as-of date, which is labelled as an assumption and can be changed there.
 Below it, the filter bar (date basis and range, job, status, Clear) narrows every number, and the active filters and aggregation grain are shown under it.
-The Overview opens with four tiles from the metric registry: source records, Recorded Markers, Pending, and Approved/not-Keyed. They overlap conceptually and do not sum to the population.
+The Overview opens with five tiles from the metric registry: source records, Recorded Markers, exact repeats not flagged (possible duplicates, with their ticket count shown), Pending, and Approved/not-Keyed. They overlap conceptually and do not sum to the population.
+Below the tiles, Review priorities lists every possible duplicate the matching rules found, ranked for review.
 
 Options:
 
@@ -87,6 +88,33 @@ Only Confident Intervals establish overlap or separation: a comparison is `overl
 
 A parse result's status is `confident`, `ambiguous`, `flagged`, `unrecognized` (text that is not times, an odd number of times, or a typo such as `pn`, never guessed), `blank`, `zero_not_a_time` (a numeric 0, never midnight), `number_not_a_time`, `datetime_not_a_period` or `not_time_text`.
 
+## Matching rules
+
+The rules run over normalized Ticket values when a Snapshot is imported and store each match as a **Candidate** between two Tickets, with the rule ID, the fields compared, the evidence strength and a reason.
+Strength describes the matching evidence, never whether anyone was paid.
+
+| Rule | Matches when | Strength |
+|---|---|---|
+| `strict_repeat` | Employee (trimmed, case-folded, spaces collapsed), Date as recorded, Job Number, Time (text trimmed, case-folded, spaces collapsed; a typed cell compares by its type and value, so the number 0 matches only another 0) and Regular Hours, Overtime, Double Time and Job Work Pay are all equal | strong |
+
+A blank or invalid comparison field never satisfies equality, so that Ticket is never in a strict group. ID, Ticket Number, timestamps, Supervisor and description are never compared; they stay review evidence.
+Rejected Tickets take part like any other.
+
+**Possible duplicates** are the connected components of Candidate edges within one employee-and-date context, recomposed from the Candidates on every request.
+Each is named from its sorted member ticket numbers, for example "Possible duplicate L225526+L225761"; the name is for reading aloud, never a storage key (`docs/adr/0004`).
+
+Review priorities ranks them in four tiers, then by the oldest Created among the members, then by the lowest Ticket Number:
+
+| Tier | Holds |
+|---|---|
+| 1 | exact repeats, not flagged: a strict match with every ticket Approved and Keyed and none a flagged duplicate |
+| 2 | an Approved ticket beside a Pending or not-Keyed one, with nothing Rejected or flagged |
+| 3 | Pending conflicts, and anything holding a flagged duplicate (its counterpart is unresolved until review outcomes exist) |
+| 4 | anything holding a Rejected ticket or an unreadable status |
+
+This is review priority, not a probability of wrongdoing; no view ranks employees or supervisors.
+On the committed workbook the Strict repeat rule finds 34 two-ticket possible duplicates: C, D, E and F (rows 620/855, 974/1868, 1309/1656, 2206/2351) in tier 1, one Approved/Pending, one Pending/Pending and 28 with a Rejected ticket.
+
 ## API
 
 | Request | Returns |
@@ -95,9 +123,10 @@ A parse result's status is `confident`, `ambiguous`, `flagged`, `unrecognized` (
 | `POST /api/snapshot/reimport` | reads the workbook at the launch path again. Identical content keeps the same Snapshot (`"imported": false`); different content becomes a new active Snapshot beside the old one (`"imported": true`). A workbook that cannot be imported answers 422 and the active Snapshot stays. Requests from another site's page are refused |
 | `GET /api/snapshots` | every Snapshot imported in this run, oldest first, with the active one marked |
 | `GET /api/as-of`, `PUT /api/as-of` | the analytical as-of date in effect; `PUT {"date": "YYYY-MM-DD"}` changes it for every later response. It stays labelled as an assumption and never follows today's date. Requests from another site's page are refused |
-| `GET /api/metrics` | the metric registry and its version: the thirteen PRD metrics, each with ID, label, definition, unit, grain, allowed dimensions, null treatment, date basis, exclusions, lineage and availability (`available`, `disabled` by a missing column, or `awaiting_rule` until the matching rules exist) |
-| `GET /api/metrics/{metric_id}` | one metric under the filters below: its value (a count, sum, or for day and hour metrics the median with a `summary`), `percentage` with numerator and denominator where the metric is a share of `ticket_count`, `coverage` naming the Tickets left out or only partly valued and why, and `warnings`. `group_by` takes an allowed dimension (`Approval Status`, `Keyed`, `Job Number`, `Job Name`, `Supervisor`, `Occupation`); `rows=true` lists the contributing Excel rows |
-| `GET /api/overview/tiles` | the four header tiles under the filters, with their definitions, the overlap note, the grain and the filter state |
+| `GET /api/metrics` | the metric registry and its version: the thirteen PRD metrics, each with ID, label, definition, unit, grain, allowed dimensions, null treatment, date basis, exclusions, lineage and availability (`available`, or `disabled` by a missing column) |
+| `GET /api/metrics/{metric_id}` | one metric under the filters below: its value (a count, sum, or for day and hour metrics the median with a `summary`; `unflagged_exact_repeat_count` counts possible duplicates and gives their `tickets`), `percentage` with numerator and denominator where the metric is a share of `ticket_count`, `coverage` naming the Tickets left out or only partly valued and why, and `warnings`. `group_by` takes an allowed dimension (`Approval Status`, `Keyed`, `Job Number`, `Job Name`, `Supervisor`, `Occupation`); `rows=true` lists the contributing Excel rows |
+| `GET /api/overview/tiles` | the five header tiles under the filters, with their definitions, the overlap note, the grain and the filter state; a tile counting possible duplicates also gives their `tickets` |
+| `GET /api/review-priorities` | the ranked possible duplicates under the filters: each with `rank`, `display_id`, `tier`, `rule_ids`, `pattern_labels`, `summary`, its `members` (Excel row, ticket number, employee, Date, Job Number, status, Keyed, `flagged_duplicate`, Created, `in_filter`) and its `candidates` (Excel rows, rule ID, fields compared, evidence strength, reason); plus the tier and rule definitions. A filter selects a possible duplicate when any member is inside it, and every member stays listed |
 | `GET /api/filters` | what the filter bar offers: date bases with their date spans, statuses and jobs with Ticket counts |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}` | one Ticket: its Excel row, dataframe index (Excel row minus 2), sheet, its import issues, and all cells with field name, position, raw type, raw value and number format. Blank cells have raw type `blank` and a null value; a numeric zero stays `0`; booleans stay `true` or `false`; dates are ISO 8601 text with raw type `datetime`; formulas have raw type `formula` and their formula text |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}/time` | the Ticket's Time cell as parsed: raw type and value, parser version, status, each period with its text, confidence (`confident` or `ambiguous`), interval, Plausible Reading (`assumed: true`), flags and notes, the union of its Confident Intervals, and notes on the status |
@@ -109,14 +138,13 @@ Without a date range every metric covers all dates, so totals reconcile with the
 A filter, metric or dimension outside the allowlist answers 422 (404 for an unknown metric) with `detail.code`, `detail.field` and `detail.message`.
 
 Every response that carries numbers also carries `snapshot_fingerprint`, `as_of` and `versions` (`app`, `registry`, `rules`, `parser`).
-The rule version stays `0.0.0` until the matching rules exist.
 
 ## Tests
 
 The one test seam is the HTTP API of the booted application, run against the committed workbook (`docs/adr/0003`).
 A refused launch never reaches HTTP, so those tests assert on the launch command's exit status and error message instead.
 The fixture in `tests/conftest.py` starts the real process on an ephemeral loopback port with a temporary data directory.
-Import-validation tests that need shapes the export does not have build a minimal same-schema workbook at test time with `tests/synthetic.py`.
+Tests that need shapes the export does not have build a minimal same-schema workbook at test time with `tests/synthetic.py`.
 
 ```sh
 uv run pytest                             # API tests
@@ -129,7 +157,8 @@ One test is skipped until the frontend has been built.
 
 ```
 src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), normalized (Ticket values for metrics),
-                               metrics (registry), filters (filter bar), timeparse (interval parser), versions, store (DuckDB Snapshot tables), api (HTTP)
+                               metrics (registry), filters (filter bar), timeparse (interval parser), rules (matching rules, possible duplicates, priority),
+                               versions, store (DuckDB Snapshot tables), api (HTTP)
 frontend/                      React + TypeScript shell built with Vite into frontend/dist
 tests/                         API tests at the booted-app seam
 data/                          the committed source workbook (private repository, ADR 0003)

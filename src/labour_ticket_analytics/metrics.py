@@ -17,8 +17,9 @@ from typing import Any, Literal
 import duckdb
 
 from labour_ticket_analytics.filters import DATE_BASES, Filters
+from labour_ticket_analytics.rules import IN_CANDIDATE_SQL, STRICT_KEY, strict_groups_sql
 
-REGISTRY_VERSION = "1.0.0"
+REGISTRY_VERSION = "1.1.0"
 
 # Grouping dimension ID (the source column) -> normalized column.
 DIMENSIONS = {
@@ -43,10 +44,10 @@ LABOUR_KNOWN_SQL = f"(NOT {HOURS_UNUSABLE_SQL} AND (t.rate IS NOT NULL OR {CLAIM
 # The hours left unpriced: every usable component, so an invalid one does not hide the others.
 USABLE_HOURS_SQL = "(COALESCE(t.regular_hours, 0) + COALESCE(t.overtime, 0) + COALESCE(t.double_time, 0))"
 
-Aggregation = Literal["count", "count_distinct", "sum", "distribution", "rule"]
+Aggregation = Literal["count", "count_distinct", "sum", "distribution", "possible_duplicate_count"]
 # The statistic each aggregation reports as a metric's value.
 STATISTICS: dict[str, str] = {
-    "count": "count", "count_distinct": "distinct count", "sum": "sum", "distribution": "median", "rule": "count",
+    "count": "count", "count_distinct": "distinct count", "sum": "sum", "distribution": "median", "possible_duplicate_count": "count",
 }
 
 
@@ -89,18 +90,12 @@ class Metric:
     partials: tuple[Partial, ...] = ()
     share_of: str | None = None
     requires_columns: tuple[str, ...] = ()
-    resolved_by: str | None = None
 
     @property
     def statistic(self) -> str:
         return STATISTICS[self.aggregation]
 
     def availability(self, fields: tuple[str, ...] | list[str]) -> dict[str, str | None]:
-        if self.resolved_by is not None:
-            return {
-                "status": "awaiting_rule",
-                "reason": f"This metric depends on matching rules that are not built yet; {self.resolved_by} computes it.",
-            }
         missing = [column for column in self.requires_columns if column not in fields]
         if missing:
             return {
@@ -160,7 +155,7 @@ def _age_metric(metric_id: str, label: str, population: str, scope: str) -> Metr
     )
 
 
-MARKER_SCOPE = "t.status = 'Approved' AND t.job_number = 0"
+FLAGGED_DUPLICATE_SCOPE = "t.status = 'Approved' AND t.job_number = 0"
 PENDING_SCOPE = "t.status = 'Pending'"
 APPROVED_NOT_KEYED_SCOPE = "t.status = 'Approved' AND t.keyed = false"
 
@@ -190,37 +185,44 @@ REGISTRY: tuple[Metric, ...] = (
         null_treatment="An invalid Approval Status or a Job Number that is not a whole number never matches.",
         exclusions_text=("Tickets with any other status or job",),
         lineage="Each Approved Ticket whose Job Number cell holds 0.",
-        scope=MARKER_SCOPE,
+        scope=FLAGGED_DUPLICATE_SCOPE,
         value="1",
         share_of="ticket_count",
     ),
     Metric(
-        id="strict_unmarked_case_count",
-        label="Strict matching candidates",
+        id="unflagged_exact_repeat_count",
+        label="Exact repeats, not flagged",
         definition=(
-            "Strict equality groups (normalized Employee, Date as recorded, Job Number, normalized Time and "
-            "the four claim components) with no Recorded Marker and every member Approved and Keyed. "
-            "Counts Cases, not Tickets, and not missed repeats."
+            "Possible duplicates found by the Strict repeat rule (normalized Employee, Date as recorded, Job Number, "
+            "normalized Time and all four hour and pay amounts match) in which no Ticket is a flagged duplicate "
+            "and every Ticket is Approved and Keyed. "
+            "Counts possible duplicates, not Tickets; whether staff handled them somewhere the export cannot show "
+            "is a question for Oliver, so they are not called missed."
         ),
-        unit="cases",
-        grain="Case",
-        aggregation="rule",
-        null_treatment="A missing or invalid comparison field never satisfies equality.",
-        exclusions_text=("Groups with a Recorded Marker", "Groups with any member not Approved and Keyed"),
-        lineage="Each Case lists its member Tickets by Excel row.",
+        unit="possible duplicates",
+        grain="Possible duplicate",
+        aggregation="possible_duplicate_count",
+        null_treatment="A missing or invalid comparison field never satisfies equality, so that Ticket is never in a group.",
+        exclusions_text=(
+            "Possible duplicates holding a flagged duplicate",
+            "Possible duplicates with any Ticket not Approved and Keyed",
+            "Tickets with a missing or invalid comparison field, which are reported",
+        ),
+        lineage="Each possible duplicate lists its member Tickets by Excel row.",
         allowed_dimensions=(),
-        resolved_by="the Strict repeat rule ticket (#6)",
     ),
     Metric(
         id="candidate_ticket_count",
         label="Candidate Tickets",
-        definition="Distinct Tickets taking part in at least one Candidate from the selected matching rules; Tickets are unioned before counting.",
+        definition="Distinct Tickets taking part in at least one Candidate from the matching rules built so far; Tickets are unioned before counting.",
         unit="tickets",
         grain="Ticket",
-        aggregation="rule",
+        aggregation="count",
         null_treatment="A Ticket counts once however many rules or Candidates it appears in.",
         lineage="Each Candidate names its two Tickets by Excel row.",
-        resolved_by="the matching rule tickets (#6, #9, #10, #11)",
+        scope=IN_CANDIDATE_SQL,
+        value="1",
+        share_of="ticket_count",
     ),
     Metric(
         id="pending_count",
@@ -440,6 +442,10 @@ def evaluate(
         result["warnings"].append(availability["reason"])
         return result
 
+    if metric.aggregation == "possible_duplicate_count":
+        result.update(_unflagged_exact_repeats(connection, fingerprint, filters, include_rows))
+        return result
+
     scoped_sql, parameters = _scoped(metric, fingerprint, filters, as_of, group_by)
     totals = _aggregate(connection, metric, scoped_sql, parameters, grouped=False)
     total = totals[0] if totals else _empty_aggregate(metric)
@@ -462,6 +468,56 @@ def evaluate(
             f"{scoped_sql} SELECT excel_row FROM scoped WHERE excluded_by IS NULL ORDER BY excel_row", parameters
         ).fetchall()
         result["contributing_rows"] = [row[0] for row in rows]
+    return result
+
+
+def _unflagged_exact_repeats(
+    connection: duckdb.DuckDBPyConnection, fingerprint: str, filters: Filters, include_rows: bool
+) -> dict[str, Any]:
+    """Strict repeat groups with no flagged duplicate and every member Approved and Keyed.
+
+    A group counts when any member is inside the filters, and then all its
+    members are listed, so a comparison is never truncated by a filter.
+    """
+    filter_sql, parameters = filters.sql("t")
+    parameters = {**parameters, "fingerprint": fingerprint}
+    possible_duplicates, tickets, rows = connection.execute(
+        f"""WITH strict AS ({strict_groups_sql()}), members AS (
+            SELECT s.strict_group, t.excel_row, t.status, t.keyed,
+                COALESCE({FLAGGED_DUPLICATE_SCOPE}, false) AS flagged, COALESCE({filter_sql}, false) AS in_filter
+            FROM strict s JOIN ticket_values t ON t.snapshot_fingerprint = $fingerprint AND t.excel_row = s.excel_row
+        ), qualifying AS (
+            SELECT strict_group FROM members GROUP BY strict_group
+            HAVING bool_and(COALESCE(status = 'Approved' AND keyed, false)) AND NOT bool_or(flagged) AND bool_or(in_filter)
+        )
+        SELECT count(DISTINCT strict_group), count(*), list(excel_row ORDER BY excel_row)
+        FROM members WHERE strict_group IN (SELECT strict_group FROM qualifying)""",
+        parameters,
+    ).fetchone()
+    incomplete = " OR ".join(f"t.{column} IS NULL" for column in STRICT_KEY.values())
+    uncompared, uncompared_rows = connection.execute(
+        "SELECT count(*), list(t.excel_row ORDER BY t.excel_row) FROM ticket_values t"
+        f" WHERE t.snapshot_fingerprint = $fingerprint AND ({filter_sql}) AND ({incomplete})",
+        parameters,
+    ).fetchone()
+    excluded = []
+    warnings = []
+    if uncompared:
+        message = "a strict comparison field (Employee, Date, Job Number, Time or a claim component) is missing or invalid"
+        excluded.append({"code": "comparison_field_unusable", "message": message, "tickets": uncompared, "excel_rows": list(uncompared_rows or [])})
+        warnings.append(
+            f"{uncompared} Ticket{'s' if uncompared != 1 else ''} could not be compared because {message} "
+            f"(Excel row{'s' if uncompared != 1 else ''} {_rows_text(list(uncompared_rows or []))}); "
+            "they are never treated as matching."
+        )
+    result: dict[str, Any] = {
+        "value": possible_duplicates,
+        "tickets": tickets,
+        "coverage": {"contributing_tickets": tickets, "excluded": excluded, "partial": []},
+        "warnings": warnings,
+    }
+    if include_rows:
+        result["contributing_rows"] = list(rows or [])
     return result
 
 

@@ -77,11 +77,12 @@ def test_a_metric_needing_a_missing_column_is_disabled_with_a_reason(tmp_path):
     assert listed["known_base_value_bbd"]["availability"]["status"] == "disabled"
 
 
-def test_a_metric_awaiting_its_rule_returns_no_number(app):
-    body = app.get("/api/metrics/strict_unmarked_case_count").json()
+def test_candidate_tickets_union_the_tickets_of_every_candidate(app):
+    body = app.get("/api/metrics/candidate_ticket_count").json()
 
-    assert body["value"] is None
-    assert body["availability"]["status"] == "awaiting_rule"
+    # The Strict repeat rule's 34 two-Ticket groups share no Ticket.
+    assert body["value"] == 68
+    assert body["percentage"]["denominator"] == 2836
 
 
 def test_negative_submission_lag_is_a_separate_exception_not_discarded_silently(app):

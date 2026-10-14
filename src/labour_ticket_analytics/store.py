@@ -3,8 +3,11 @@
 Snapshot tables are rebuilt from the workbook on every launch and hold the
 source Tickets as cells with raw value, raw type, Excel row and dataframe
 index. Each Ticket's Time cell is also parsed once at import and the parse
-results are kept beside the tables, keyed by Excel row. Local review data (a
-later ticket) lives in a separate file and is never mixed into these tables.
+results are kept beside the tables, keyed by Excel row. The matching rules run
+at import too and their Candidates are stored as relationship edges, apart
+from the Tickets; Possible Duplicates are recomposed from them on every read.
+Local review data (a later ticket) lives in a separate file and is never
+mixed into these tables.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from typing import Any, Iterable
 
 import duckdb
 
-from labour_ticket_analytics import metrics, normalized
+from labour_ticket_analytics import metrics, normalized, rules
 from labour_ticket_analytics.filters import DATE_BASES, Filters
 from labour_ticket_analytics.timeparse import TimeParse, parse_time
 from labour_ticket_analytics.validation import APPROVAL_STATUSES
@@ -66,6 +69,16 @@ CREATE TABLE cells (
     value_timestamp TIMESTAMP,
     number_format VARCHAR,
     PRIMARY KEY (snapshot_fingerprint, excel_row, position)
+);
+CREATE TABLE candidates (
+    snapshot_fingerprint VARCHAR NOT NULL,
+    rule_id VARCHAR NOT NULL,
+    first_row INTEGER NOT NULL,
+    second_row INTEGER NOT NULL,
+    fields_compared VARCHAR[] NOT NULL,
+    evidence_strength VARCHAR NOT NULL,
+    reason VARCHAR NOT NULL,
+    PRIMARY KEY (snapshot_fingerprint, rule_id, first_row, second_row)
 );
 """
 
@@ -139,6 +152,7 @@ class SnapshotStore:
             self.connection.execute("BEGIN TRANSACTION")
             try:
                 self._insert(snapshot)
+                rules.record_candidates(self.connection, snapshot.fingerprint)
             except BaseException:
                 self.connection.execute("ROLLBACK")
                 raise
@@ -321,6 +335,50 @@ class SnapshotStore:
             ],
             "statuses": [{"id": status, "tickets": statuses.get(status, 0)} for status in APPROVAL_STATUSES],
             "jobs": [{"job_number": job, "job_name": name, "tickets": count} for job, name, count in jobs],
+        }
+
+    def possible_duplicates(self, fingerprint: str, filters: Filters) -> list[dict[str, Any]]:
+        """The Possible Duplicates with any member inside the filters, recomposed from Candidates and ranked.
+
+        Every member stays listed, marked in or out of the filters, so a
+        comparison is never truncated.
+        """
+        with self._lock:
+            candidates = [
+                rules.Candidate(row[0], row[1], row[2], tuple(row[3]), row[4], row[5])
+                for row in self.connection.execute(
+                    "SELECT rule_id, first_row, second_row, fields_compared, evidence_strength, reason"
+                    " FROM candidates WHERE snapshot_fingerprint = ?",
+                    [fingerprint],
+                ).fetchall()
+            ]
+            members = self._candidate_members(fingerprint, filters)
+        composed = [rules.possible_duplicate(component, members) for component in rules.compose(candidates)]
+        return rules.ranked([item for item in composed if any(member["in_filter"] for member in item["members"])])
+
+    def _candidate_members(self, fingerprint: str, filters: Filters) -> dict[int, dict[str, Any]]:
+        """Each Ticket in a Candidate with its source state and whether it is inside the filters."""
+        filter_sql, parameters = filters.sql("t")
+        rows = self.connection.execute(
+            "SELECT t.excel_row, t.ticket_number, t.employee_name, t.work_date, t.job_number, t.status, t.keyed,"
+            f" COALESCE({metrics.FLAGGED_DUPLICATE_SCOPE}, false), t.created, COALESCE({filter_sql}, false)"
+            f" FROM ticket_values t WHERE t.snapshot_fingerprint = $fingerprint AND {rules.IN_CANDIDATE_SQL}",
+            {**parameters, "fingerprint": fingerprint},
+        ).fetchall()
+        return {
+            row[0]: {
+                "excel_row": row[0],
+                "ticket_number": row[1],
+                "employee": row[2],
+                "date": _iso(row[3].date()) if row[3] is not None else None,
+                "job_number": row[4],
+                "status": row[5],
+                "keyed": row[6],
+                "flagged_duplicate": row[7],
+                "created": _iso(row[8]),
+                "in_filter": row[9],
+            }
+            for row in rows
         }
 
     def time_parse(self, fingerprint: str, excel_row: int) -> TimeParse | None:

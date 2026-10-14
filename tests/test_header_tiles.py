@@ -11,6 +11,7 @@ def test_tiles_reproduce_the_published_counts_on_all_data(app):
     assert [(tile["label"], tile["value"]) for tile in body["tiles"]] == [
         ("Source records", 2836),
         ("Recorded Markers", 28),
+        ("Exact repeats, not flagged", 4),
         ("Pending", 129),
         ("Approved, not Keyed", 149),
     ]
@@ -46,8 +47,14 @@ def test_a_status_filter_narrows_every_tile_consistently(app):
     approved = tile_values(app.get("/api/overview/tiles", params={"status": "Approved"}).json())
     rejected = tile_values(app.get("/api/overview/tiles", params={"status": "Rejected"}).json())
 
-    assert pending == {"ticket_count": 129, "marked_ticket_count": 0, "pending_count": 129, "approved_not_keyed_count": 0}
-    assert approved == {"ticket_count": 2611, "marked_ticket_count": 28, "pending_count": 0, "approved_not_keyed_count": 149}
+    assert pending == {
+        "ticket_count": 129, "marked_ticket_count": 0, "unflagged_exact_repeat_count": 0,
+        "pending_count": 129, "approved_not_keyed_count": 0,
+    }
+    assert approved == {
+        "ticket_count": 2611, "marked_ticket_count": 28, "unflagged_exact_repeat_count": 4,
+        "pending_count": 0, "approved_not_keyed_count": 149,
+    }
     assert rejected["ticket_count"] == 96
 
 

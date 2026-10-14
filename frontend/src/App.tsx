@@ -4,16 +4,19 @@ import {
   changeAsOf,
   fetchFilterOptions,
   fetchHeader,
+  fetchReviewPriorities,
   fetchTiles,
   NO_FILTERS,
   reimportWorkbook,
   type FilterOptions,
   type FilterState,
   type HeaderResponse,
+  type ReviewPrioritiesResponse,
   type TilesResponse,
 } from "./api";
 import { ActiveFilters, FilterBar } from "./FilterBar";
 import { HeaderTiles } from "./HeaderTiles";
+import { ReviewPriorities } from "./ReviewPriorities";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
 
 type Tab = "overview" | "explore";
@@ -32,6 +35,8 @@ export function App() {
   const [options, setOptions] = useState<FilterOptions | null>(null);
   const [tiles, setTiles] = useState<TilesResponse | null>(null);
   const [tilesError, setTilesError] = useState("");
+  const [priorities, setPriorities] = useState<ReviewPrioritiesResponse | null>(null);
+  const [prioritiesError, setPrioritiesError] = useState("");
   // Bumped whenever the Snapshot or as-of date changes, so every view refetches its numbers.
   const [generation, setGeneration] = useState(0);
 
@@ -96,6 +101,20 @@ export function App() {
     return () => controller.abort();
   }, [filters, generation]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchReviewPriorities(filters, controller.signal)
+      .then((data) => {
+        setPriorities(data);
+        setPrioritiesError("");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setPrioritiesError(error instanceof Error ? error.message : String(error));
+      });
+    return () => controller.abort();
+  }, [filters, generation]);
+
   return (
     <div className="app">
       <header className="masthead">
@@ -151,9 +170,17 @@ export function App() {
           <section aria-labelledby="overview-heading">
             <h2 id="overview-heading">Overview</h2>
             {tiles ? <HeaderTiles data={tiles} /> : <p className="status">Loading the tiles…</p>}
+            {prioritiesError ? (
+              <p className="notice notice-error" role="alert">
+                The review priorities could not be loaded: {prioritiesError}. Change the filters or reload the page.
+              </p>
+            ) : priorities ? (
+              <ReviewPriorities data={priorities} />
+            ) : (
+              <p className="status">Loading the review priorities…</p>
+            )}
             <p className="placeholder">
-              The review priorities, Recorded Markers, processing queue and data readiness views arrive with later
-              tickets.
+              The flagged duplicates, processing queue and data readiness views arrive with later tickets.
             </p>
           </section>
         ) : (

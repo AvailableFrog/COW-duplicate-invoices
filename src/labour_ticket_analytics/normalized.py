@@ -18,6 +18,8 @@ from labour_ticket_analytics.workbook import Cell, Ticket
 COLUMNS = {
     "snapshot_fingerprint": "VARCHAR",
     "excel_row": "INTEGER",
+    "ticket_number": "VARCHAR",
+    "employee_name": "VARCHAR",
     "employee_label": "VARCHAR",
     "job_number": "BIGINT",
     "job_name": "VARCHAR",
@@ -26,6 +28,7 @@ COLUMNS = {
     "work_date": "TIMESTAMP",
     "created": "TIMESTAMP",
     "date_approved": "TIMESTAMP",
+    "time_key": "VARCHAR",
     "regular_hours": "DOUBLE",
     "overtime": "DOUBLE",
     "double_time": "DOUBLE",
@@ -44,6 +47,22 @@ def employee_label(cell: Cell | None) -> str | None:
     return " ".join(text.split()).casefold() or None
 
 
+def time_key(cell: Cell | None) -> str | None:
+    """The Time cell as the Strict repeat rule compares it: text after trim, case-fold and whitespace collapse.
+
+    A typed cell keeps its raw type in the key, so the number 0 equals only
+    another 0 and never the text "0" or a blank. Blank, formula and error
+    cells have no key and never satisfy equality.
+    """
+    if cell is None or cell.raw_type in ("blank", "formula", "error"):
+        return None
+    if cell.raw_type == "str":
+        text = " ".join(cell.value.split()).casefold()
+        return f"text:{text}" if text else None
+    value = cell.value.isoformat() if hasattr(cell.value, "isoformat") else repr(cell.value)
+    return f"{cell.raw_type}:{value}"
+
+
 def ticket_values(fingerprint: str, ticket: Ticket) -> tuple[Any, ...]:
     """One row of normalized values, in COLUMNS order."""
     cells = {cell.field: cell for cell in ticket.cells}
@@ -56,6 +75,8 @@ def ticket_values(fingerprint: str, ticket: Ticket) -> tuple[Any, ...]:
     return (
         fingerprint,
         ticket.excel_row,
+        _text(cells.get("Ticket Number")),
+        _text(cells.get("Employee")),
         employee_label(cells.get("Employee")),
         read("Job Number", whole_number),
         _text(cells.get("Job Name")),
@@ -64,6 +85,7 @@ def ticket_values(fingerprint: str, ticket: Ticket) -> tuple[Any, ...]:
         read("Date", date_value),
         read("Created", date_value),
         read("Date Approved", date_value),
+        time_key(cells.get("Time")),
         read("Regular Hours", number_value),
         read("Overtime", number_value),
         read("Double Time", number_value),

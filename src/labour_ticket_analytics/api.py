@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from labour_ticket_analytics import __version__
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
+from labour_ticket_analytics.rules import RULES, TIERS
 from labour_ticket_analytics.store import SnapshotStore
 from labour_ticket_analytics.timeparse import PARSER_VERSION, TimeParse, compare
 from labour_ticket_analytics.versions import versions
@@ -32,10 +33,18 @@ AS_OF_CHANGED_NOTE = (
 )
 
 # The header tiles, in display order. Each is a registry metric, never a constant.
-TILES = ("ticket_count", "marked_ticket_count", "pending_count", "approved_not_keyed_count")
+TILES = (
+    "ticket_count", "marked_ticket_count", "unflagged_exact_repeat_count", "pending_count", "approved_not_keyed_count",
+)
 TILES_OVERLAP_NOTE = (
-    "These tiles overlap conceptually and do not sum to the Tickets in the Snapshot: each counts Tickets "
-    "from the same population, and one Ticket can fall under more than one tile."
+    "These tiles overlap conceptually and do not sum to the Tickets in the Snapshot: they count Tickets, "
+    "or possible duplicates with their Tickets shown, from the same population, and one Ticket can fall "
+    "under more than one tile."
+)
+
+REVIEW_PRIORITIES_NOTE = (
+    "Ordered by review priority, not by any probability of wrongdoing; employees and supervisors are never ranked. "
+    "A filter selects a possible duplicate when any of its tickets matches, and every ticket stays listed."
 )
 
 MISSING_FRONTEND_HTML = """<!doctype html>
@@ -204,6 +213,19 @@ def create_app(state: AppState) -> FastAPI:
         filters = active_filters(fingerprint, query)
         return {**evaluate(fingerprint, metric_id, filters, group_by=group_by, include_rows=rows), **context(fingerprint)}
 
+    @app.get("/api/review-priorities")
+    def review_priorities(query: dict = Depends(filter_query)) -> dict:
+        fingerprint = state.active_fingerprint
+        filters = active_filters(fingerprint, query)
+        return {
+            "possible_duplicates": state.store.possible_duplicates(fingerprint, filters),
+            "tiers": [tier.payload() for tier in TIERS],
+            "rules": [rule.payload() for rule in RULES.values()],
+            "note": REVIEW_PRIORITIES_NOTE,
+            "filters": filters.payload(),
+            **context(fingerprint),
+        }
+
     @app.get("/api/filters")
     def filter_options() -> dict:
         fingerprint = state.active_fingerprint
@@ -220,6 +242,7 @@ def create_app(state: AppState) -> FastAPI:
                     "metric_id": result["metric"]["id"],
                     "label": result["metric"]["label"],
                     "value": result["value"],
+                    "tickets": result.get("tickets"),
                     "unit": result["metric"]["unit"],
                     "definition": result["metric"]["definition"],
                     "percentage": result["percentage"],

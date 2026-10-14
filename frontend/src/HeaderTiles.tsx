@@ -15,6 +15,11 @@ export function HeaderTiles({ data }: { data: TilesResponse }) {
           <li key={tile.metric_id} className="tile">
             <span className="tile-label">{tile.label}</span>
             <span className="tile-value num">{tile.value === null ? "—" : numberFormat.format(tile.value)}</span>
+            {tile.tickets !== null ? (
+              <span className="muted tile-share num">
+                {numberFormat.format(tile.tickets)} {tile.tickets === 1 ? "ticket" : "tickets"} in {tile.unit}
+              </span>
+            ) : null}
             {tile.percentage && tile.percentage.ratio !== null ? (
               <span className="muted tile-share num">
                 {percentFormat.format(tile.percentage.ratio)} ({numberFormat.format(tile.percentage.numerator)} of{" "}

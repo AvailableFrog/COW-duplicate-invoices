@@ -98,6 +98,8 @@ export interface Tile {
   metric_id: string;
   label: string;
   value: number | null;
+  /** For a tile counting possible duplicates, the Tickets they hold; null for Ticket counts. */
+  tickets: number | null;
   unit: string;
   definition: string;
   percentage: Percentage | null;
@@ -108,6 +110,63 @@ export interface TilesResponse extends Provenance {
   tiles: Tile[];
   note: string;
   grain: string;
+  filters: FilterPayload;
+}
+
+export interface Member {
+  excel_row: number;
+  ticket_number: string | null;
+  employee: string | null;
+  date: string | null;
+  job_number: number | null;
+  status: ApprovalStatus | null;
+  keyed: boolean | null;
+  flagged_duplicate: boolean;
+  created: string | null;
+  in_filter: boolean;
+}
+
+export interface Candidate {
+  excel_rows: [number, number];
+  rule_id: string;
+  fields_compared: string[];
+  evidence_strength: string;
+  reason: string;
+}
+
+export interface PriorityTier {
+  rank: number;
+  id: string;
+  label: string;
+}
+
+export interface PossibleDuplicate {
+  rank: number;
+  /** Derived from the sorted member ticket numbers; a display name, never a storage key. */
+  display_id: string;
+  tier: PriorityTier;
+  exact_repeat_not_flagged: boolean;
+  rule_ids: string[];
+  pattern_labels: string[];
+  summary: string;
+  members: Member[];
+  candidates: Candidate[];
+}
+
+export interface Rule {
+  id: string;
+  label: string;
+  pattern: string;
+  evidence_strength: string;
+  fields_compared: string[];
+  reason: string;
+}
+
+export interface ReviewPrioritiesResponse extends Provenance {
+  possible_duplicates: PossibleDuplicate[];
+  tiers: PriorityTier[];
+  rules: Rule[];
+  note: string;
   filters: FilterPayload;
 }
 
@@ -150,6 +209,10 @@ export function fetchFilterOptions(signal?: AbortSignal): Promise<FilterOptions>
 
 export function fetchTiles(filters: FilterState, signal?: AbortSignal): Promise<TilesResponse> {
   return getJson<TilesResponse>(`/api/overview/tiles?${filterQuery(filters)}`, signal);
+}
+
+export function fetchReviewPriorities(filters: FilterState, signal?: AbortSignal): Promise<ReviewPrioritiesResponse> {
+  return getJson<ReviewPrioritiesResponse>(`/api/review-priorities?${filterQuery(filters)}`, signal);
 }
 
 /** Change the analytical as-of date; later responses are computed against it. */
