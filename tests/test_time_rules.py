@@ -68,15 +68,20 @@ def test_a_time_text_variant_discloses_which_condition_matched(tmp_path):
         # Same tokens, different punctuation, no AM/PM: only the token condition holds.
         ticket(3, Employee="Bob Jones", Time="7:30-4:30"),
         ticket(4, Employee="Bob Jones", Time="7.30 - 4.30"),
+        # Only the spaces around the dash moved.
+        ticket(5, Employee="Cy Lee", Time="7:30am -4:30pm"),
+        ticket(6, Employee="Cy Lee", Time="7:30am- 4:30pm"),
     ])
 
     with running(workbook, tmp_path) as booted:
         fingerprint = fingerprint_of(booted)
         intervals = candidates(evidence(booted, 2, fingerprint), "time_text_variant")
         tokens = candidates(evidence(booted, 4, fingerprint), "time_text_variant")
+        moved = candidates(evidence(booted, 6, fingerprint), "time_text_variant")
 
     assert "same work periods" in intervals[0]["reason"] and "punctuation" not in intervals[0]["reason"]
     assert "punctuation" in tokens[0]["reason"] and "same work periods" not in tokens[0]["reason"]
+    assert "differs only in spacing around" in moved[0]["reason"] and "punctuation" not in moved[0]["reason"]
 
 
 # A. Romarian Alleyne, rows 591/593: "12:30 PM - 4:30 PM" (job 41215) / "7:30 AM - 11:30 AM" (job 20125), both 4 hours.

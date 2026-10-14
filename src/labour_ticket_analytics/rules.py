@@ -336,7 +336,7 @@ def _work_period_conflict(first: PairTicket, second: PairTicket) -> Verdict:
     comparison = compare(first.time, second.time)
     result = comparison["result"]
     if result == "overlap":
-        jobs = _jobs(first, second)
+        jobs = _job_phrase(first, second)
         shared = _spans(comparison["intersection"])
         return Verdict(
             rule, True,
@@ -381,7 +381,7 @@ def _ambiguous_period_comparison(first: PairTicket, second: PairTicket) -> Verdi
     )
     return Verdict(
         rule, True,
-        "Same job and all four hour and pay amounts, with times written without AM/PM, so whether the work"
+        "Same job and all four hour and pay amounts, with a time written without AM/PM, so whether the work"
         f" periods overlap cannot be established and the times need review. {reading}",
         WORK_PERIOD_CONFLICT.pattern if assumed else None,
     )
@@ -424,7 +424,11 @@ def _token_differences(first: TimeParse, second: TimeParse) -> list[str]:
         return []
 
     def spacing(text: str) -> str:
-        return " ".join(re.sub(r"[^\w\s]", "", text.casefold()).split())
+        # Where the spaces fall between the other characters. With the same punctuation count each
+        # mark keeps its place; with a different count the marks are dropped, so an added or removed
+        # mark is reported as punctuation and not also as spacing.
+        collapsed = " ".join(text.casefold().split())
+        return re.sub(r"[^\w\s]", "\u00b7" if same_marks else "", collapsed)
 
     def letters(text: str) -> list[str]:
         return [character for character in text if character.isalnum()]
@@ -432,19 +436,18 @@ def _token_differences(first: TimeParse, second: TimeParse) -> list[str]:
     def punctuation(text: str) -> list[str]:
         return [character for character in text if not character.isalnum() and not character.isspace()]
 
-    differences = [
+    same_marks = len(punctuation(a)) == len(punctuation(b))
+    # Case alone never reaches here: the Strict repeat compares Time case-folded.
+    return [
         name for name, differs in (
             ("spacing", spacing(a) != spacing(b)),
             ("case", letters(a) != letters(b)),
             ("punctuation", punctuation(a) != punctuation(b)),
         ) if differs
     ]
-    # The texts differ after the strict normalization, so with equal tokens something above differs;
-    # a difference only in leading, trailing or repeated spaces is a strict repeat and never reaches here.
-    return differences or ["spacing"]
 
 
-def _jobs(first: PairTicket, second: PairTicket) -> str:
+def _job_phrase(first: PairTicket, second: PairTicket) -> str:
     a, b = first.values["Job Number"], second.values["Job Number"]
     if a is None or b is None:
         return ""
