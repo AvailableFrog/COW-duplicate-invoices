@@ -1,0 +1,79 @@
+"""Minimal same-schema workbooks built at test time (ADR 0003).
+
+The committed export cannot show a missing column, a bad cell or a second
+Snapshot, so these tests write a small workbook with the export's 22 columns
+into a temporary directory. This is the only synthetic data in release one.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from pathlib import Path
+from typing import Any
+
+import openpyxl
+
+SHEET = "Labour Tickets (1)"
+
+FIELDS = [
+    "Employee", "Occupation", "Ticket Number", "Job Name", "Job Number", "Date", "Time",
+    "Regular Hours", "Overtime", "Double Time", "Job Work Pay", "Description of Job Work",
+    "Supervisor", "Approval Status", "Modified", "Created", "ID", "Email Address", "Keyed",
+    "Rate", "Date Approved", "Modified By",
+]
+
+
+def ticket(number: int = 1, **overrides: Any) -> dict[str, Any]:
+    """One valid Ticket; pass field values by name with spaces as underscores."""
+    values: dict[str, Any] = {
+        "Employee": f"Employee {number}",
+        "Occupation": "Labourer",
+        "Ticket Number": f"L{number:06d}",
+        "Job Name": "Beachlands",
+        "Job Number": 41215,
+        "Date": dt.datetime(2026, 9, 28),
+        "Time": "7:30 am to 4:30 pm",
+        "Regular Hours": 8,
+        "Overtime": 0,
+        "Double Time": 0,
+        "Job Work Pay": 0,
+        "Description of Job Work": "Site work",
+        "Supervisor": "Supervisor A",
+        "Approval Status": "Approved",
+        "Modified": dt.datetime(2026, 10, 5, 7, 48),
+        "Created": dt.datetime(2026, 10, 2, 18, 56),
+        "ID": 100000 + number,
+        "Email Address": f"employee{number}@example.com",
+        "Keyed": True,
+        "Rate": 14.53,
+        "Date Approved": dt.datetime(2026, 10, 5, 7, 42),
+        "Modified By": "Reviewer A",
+    }
+    for key, value in overrides.items():
+        name = key.replace("_", " ")
+        if name not in values:
+            raise KeyError(f"unknown field {name!r}")
+        values[name] = value
+    return values
+
+
+def write_workbook(
+    path: Path,
+    tickets: list[dict[str, Any] | None],
+    *,
+    fields: list[str] = FIELDS,
+    sheet_title: str = SHEET,
+) -> Path:
+    """Write the header and one row per Ticket; None writes a fully blank row."""
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = sheet_title
+    sheet.append(fields)
+    for values in tickets:
+        sheet.append([None] * len(fields) if values is None else [values.get(name) for name in fields])
+    book.save(path)
+    return path
+
+
+def without(*names: str) -> list[str]:
+    return [name for name in FIELDS if name not in names]

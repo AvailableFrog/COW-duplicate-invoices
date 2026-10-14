@@ -42,19 +42,44 @@ Options:
 | `--host ADDR` | `127.0.0.1` | must be a loopback address; anything else is refused |
 
 The Snapshot tables are rebuilt in memory from the workbook on every launch.
-A workbook that cannot be read, or is not found, stops the launch with a message naming the problem.
+
+## Import validation
+
+Only an unreadable or missing workbook, a workbook with no data sheet, or a data sheet missing a required column (or naming a schema column twice) stops the launch, with a message naming the problem.
+The data sheet is the first worksheet with a header row.
+The required columns are Employee, Ticket Number, Job Number, Date, Time, Regular Hours, Overtime, Double Time, Job Work Pay, Approval Status, Keyed and Created.
+A missing optional column still loads; the header lists the metrics, groupings, checks and displays it disables, each with a reason.
+
+Nothing is dropped or repaired. A cell or business ID that fails validation stays in its Ticket and becomes an import issue with its Excel row, field and one of these codes:
+
+| Code | Raised when |
+|---|---|
+| `missing_value` | a required cell is empty or only spaces |
+| `missing_business_id` | Ticket Number or ID is empty |
+| `repeated_business_id` | Ticket Number (compared as written) or ID (compared as a whole number) appears on another row |
+| `invalid_number` | hours, pay or Rate is not a number; Job Number or ID is not a whole number without grouping separators |
+| `invalid_date` | a date column holds neither an Excel date nor ISO 8601 text; other date text is not guessed |
+| `unknown_status` | Approval Status is not exactly Approved, Pending or Rejected |
+| `unknown_boolean` | Keyed is not a true or false cell |
+| `formula_not_evaluated` | a cell holds a formula, which is kept as text |
+| `error_value` | a cell holds a spreadsheet error such as `#N/A` |
+
+Text columns, including Time, are kept raw and not type-checked here; a numeric zero in Time stays `0`.
 
 ## API
 
 | Request | Returns |
 |---|---|
-| `GET /api/snapshot` | the active Snapshot header (fingerprint, sheet, row and field counts, fields, import issues) plus the as-of date in effect and the application version |
-| `GET /api/snapshots/{fingerprint}/tickets/{excel_row}` | one Ticket: its Excel row, dataframe index (Excel row minus 2), sheet, and all cells with field name, position, raw type, raw value and number format. Blank cells have raw type `blank` and a null value; a numeric zero stays `0`; booleans stay `true` or `false`; dates are ISO 8601 text with raw type `datetime` |
+| `GET /api/snapshot` | the active Snapshot header (fingerprint, sheet, row and field counts, fields, import issues, missing optional columns, disabled features) plus the as-of date in effect and the application version |
+| `POST /api/snapshot/reimport` | reads the workbook at the launch path again. Identical content keeps the same Snapshot (`"imported": false`); different content becomes a new active Snapshot beside the old one (`"imported": true`). A workbook that cannot be imported answers 422 and the active Snapshot stays. Requests from another site's page are refused |
+| `GET /api/snapshots` | every Snapshot imported in this run, oldest first, with the active one marked |
+| `GET /api/snapshots/{fingerprint}/tickets/{excel_row}` | one Ticket: its Excel row, dataframe index (Excel row minus 2), sheet, its import issues, and all cells with field name, position, raw type, raw value and number format. Blank cells have raw type `blank` and a null value; a numeric zero stays `0`; booleans stay `true` or `false`; dates are ISO 8601 text with raw type `datetime`; formulas have raw type `formula` and their formula text |
 
 ## Tests
 
 The one test seam is the HTTP API of the booted application, run against the committed workbook (`docs/adr/0003`).
 The fixture in `tests/conftest.py` starts the real process on an ephemeral loopback port with a temporary data directory.
+Import-validation tests that need shapes the export does not have build a minimal same-schema workbook at test time with `tests/synthetic.py`.
 
 ```sh
 uv run pytest                             # API tests
@@ -66,7 +91,7 @@ One test is skipped until the frontend has been built.
 ## Layout
 
 ```
-src/labour_ticket_analytics/   cli (launch), workbook (import), store (DuckDB Snapshot tables), api (HTTP)
+src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), store (DuckDB Snapshot tables), api (HTTP)
 frontend/                      React + TypeScript shell built with Vite into frontend/dist
 tests/                         API tests at the booted-app seam
 data/                          the committed source workbook (private repository, ADR 0003)

@@ -16,6 +16,14 @@ from typing import Any
 
 import openpyxl
 
+from labour_ticket_analytics.schema import (
+    disabled_features,
+    missing_optional_columns,
+    missing_required_columns,
+    repeated_schema_columns,
+)
+from labour_ticket_analytics.validation import validate
+
 FINGERPRINT_ALGORITHM = "sha256"
 HEADER_ROW = 1
 FIRST_DATA_ROW = HEADER_ROW + 1
@@ -53,6 +61,14 @@ class Snapshot:
     import_issues: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     @property
+    def missing_optional_columns(self) -> list[str]:
+        return missing_optional_columns(self.fields)
+
+    @property
+    def disabled_features(self) -> list[dict[str, Any]]:
+        return disabled_features(self.fields)
+
+    @property
     def row_count(self) -> int:
         return len(self.tickets)
 
@@ -82,14 +98,25 @@ def import_workbook(path: Path) -> Snapshot:
     except Exception as error:  # openpyxl raises several unrelated types
         raise WorkbookError(f"workbook could not be read: {path.name} ({error})") from error
     try:
-        if not book.sheetnames:
-            raise WorkbookError(f"workbook has no data sheet: {path.name}")
-        sheet = book[book.sheetnames[0]]
-        rows = sheet.iter_rows(min_row=HEADER_ROW)
-        header = next(rows, None)
-        if header is None:
-            raise WorkbookError(f"data sheet {sheet.title!r} has no header row")
+        found = _find_data_sheet(book)
+        if found is None:
+            raise WorkbookError(
+                f"workbook has no data sheet: {path.name} has no worksheet with a header row in row {HEADER_ROW}"
+            )
+        sheet, header, rows = found
         fields = tuple(_header_name(cell.value, index) for index, cell in enumerate(header))
+        missing = missing_required_columns(fields)
+        if missing:
+            raise WorkbookError(
+                f"data sheet {sheet.title!r} in {path.name} is missing required "
+                f"column{'s' if len(missing) > 1 else ''}: {', '.join(missing)}"
+            )
+        repeated = repeated_schema_columns(fields)
+        if repeated:
+            raise WorkbookError(
+                f"data sheet {sheet.title!r} in {path.name} names a column more than once, "
+                f"so its mapping is ambiguous: {', '.join(repeated)}"
+            )
         tickets = _read_tickets(rows, fields)
     finally:
         book.close()
@@ -101,7 +128,22 @@ def import_workbook(path: Path) -> Snapshot:
         fields=fields,
         tickets=tuple(tickets),
         imported_at=dt.datetime.now(dt.timezone.utc),
+        import_issues=tuple(validate(tickets)),
     )
+
+
+def _find_data_sheet(book):
+    """The first worksheet whose header row has a value, with its header and remaining rows.
+
+    A cover or notes sheet that is empty is skipped; chart sheets are not
+    worksheets and are never considered.
+    """
+    for sheet in book.worksheets:
+        rows = sheet.iter_rows(min_row=HEADER_ROW)
+        header = next(rows, None)
+        if header and any(getattr(cell, "value", None) not in (None, "") for cell in header):
+            return sheet, header, rows
+    return None
 
 
 def _header_name(value: Any, index: int) -> str:

@@ -85,7 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(snapshot.import_issues)} import issues, {elapsed:.2f}s",
         flush=True,
     )
-    state = AppState(store=store, active_fingerprint=snapshot.fingerprint, as_of=args.as_of)
+    state = AppState(
+        store=store, active_fingerprint=snapshot.fingerprint, as_of=args.as_of, workbook_path=args.workbook.resolve()
+    )
     app = create_app(state)
     sock = bind(args.host, args.port)
     bound_host, bound_port = sock.getsockname()[:2]

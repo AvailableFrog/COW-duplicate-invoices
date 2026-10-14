@@ -40,13 +40,34 @@ export function SnapshotHeaderBar({ header }: { header: HeaderResponse }) {
               <summary>Show</summary>
               <ul>
                 {snapshot.import_issues.map((issue, index) => (
-                  <li key={index}>{issue.message}</li>
+                  <li key={index}>
+                    Row {issue.excel_row}: {issue.message}
+                  </li>
                 ))}
               </ul>
             </details>
           ) : null}
         </dd>
       </div>
+      {snapshot.disabled_features.length > 0 ? (
+        <div>
+          <dt>Disabled</dt>
+          <dd className="num unresolved">
+            {numberFormat.format(snapshot.disabled_features.length)}
+            <span className="muted"> from {snapshot.missing_optional_columns.length} missing columns</span>
+            <details>
+              <summary>Why</summary>
+              <ul>
+                {snapshot.disabled_features.map((item) => (
+                  <li key={`${item.column}/${item.feature}`}>
+                    {item.feature} ({item.kind}): {item.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </dd>
+        </div>
+      ) : null}
       <div>
         <dt>As-of date</dt>
         <dd>

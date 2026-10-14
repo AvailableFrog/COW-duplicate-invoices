@@ -1,25 +1,11 @@
 """Ticket #2: the import keeps the original row order, blank rows included."""
 
-import openpyxl
-
 from conftest import boot, shutdown
-
-FIELDS = ["Employee", "Ticket Number", "Keyed"]
-
-
-def write_workbook(path, rows):
-    book = openpyxl.Workbook()
-    sheet = book.active
-    sheet.title = "Labour Tickets (1)"
-    sheet.append(FIELDS)
-    for row in rows:
-        sheet.append(row)
-    book.save(path)
+from synthetic import FIELDS, ticket, write_workbook
 
 
 def test_a_blank_row_in_the_middle_keeps_its_excel_row_and_later_rows_keep_theirs(tmp_path):
-    workbook = tmp_path / "gap.xlsx"
-    write_workbook(workbook, [["Ann", "L1", True], [None, None, None], ["Ben", "L2", False]])
+    workbook = write_workbook(tmp_path / "gap.xlsx", [ticket(1), None, ticket(2, Employee="Ben")])
 
     booted = boot(workbook, tmp_path)
     try:
@@ -31,7 +17,9 @@ def test_a_blank_row_in_the_middle_keeps_its_excel_row_and_later_rows_keep_their
         shutdown(booted)
 
     assert header["row_count"] == 3
-    assert header["field_count"] == 3
+    assert header["field_count"] == len(FIELDS)
     assert gap["dataframe_index"] == 1
-    assert [cell["raw_type"] for cell in gap["cells"]] == ["blank", "blank", "blank"]
-    assert [cell["value"] for cell in ben["cells"]] == ["Ben", "L2", False]
+    assert {cell["raw_type"] for cell in gap["cells"]} == {"blank"}
+    assert [(cell["field"], cell["value"]) for cell in ben["cells"][:3]] == [
+        ("Employee", "Ben"), ("Occupation", "Labourer"), ("Ticket Number", "L000002"),
+    ]

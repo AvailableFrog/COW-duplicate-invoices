@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from labour_ticket_analytics import __version__
 from labour_ticket_analytics.store import SnapshotStore
+from labour_ticket_analytics.workbook import WorkbookError, fingerprint_workbook, import_workbook
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 DEFAULT_AS_OF = dt.date(2026, 10, 8)
@@ -38,7 +40,44 @@ class AppState:
     store: SnapshotStore
     active_fingerprint: str
     as_of: dt.date
+    workbook_path: Path
     frontend_dist: Path = FRONTEND_DIST
+    import_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def reimport(self) -> bool:
+        """Read the workbook at the launch path again and make it the active Snapshot.
+
+        Identical content (the same fingerprint) is a no-op and is not parsed
+        again. Different content becomes a new Snapshot beside the old one,
+        never extra Tickets in it. A workbook that cannot be imported raises
+        WorkbookError and leaves the active Snapshot as it was. Returns
+        whether a new Snapshot was added.
+        """
+        with self.import_lock:
+            if not self.workbook_path.is_file():
+                raise WorkbookError(f"workbook not found: {self.workbook_path}")
+            fingerprint = fingerprint_workbook(self.workbook_path)
+            added = False
+            if not self.store.has_snapshot(fingerprint):
+                snapshot = import_workbook(self.workbook_path)
+                added = self.store.add_snapshot(snapshot)
+                fingerprint = snapshot.fingerprint
+            self.active_fingerprint = fingerprint
+            return added
+
+
+def require_same_origin(request: Request) -> None:
+    """Refuse a state-changing request that a browser sent on behalf of another site.
+
+    Browsers attach Origin to cross-site POSTs; a request without one comes
+    from a local tool such as curl and is allowed.
+    """
+    origin = request.headers.get("origin")
+    if origin is None:
+        return
+    expected = f"{request.url.scheme}://{request.headers.get('host', '')}"
+    if origin != expected:
+        raise HTTPException(status_code=403, detail="cross-site requests may not change the active Snapshot")
 
 
 def create_app(state: AppState) -> FastAPI:
@@ -57,6 +96,24 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/api/snapshot")
     def snapshot_header() -> dict:
         return header_payload()
+
+    @app.post("/api/snapshot/reimport")
+    def reimport(request: Request) -> dict:
+        require_same_origin(request)
+        try:
+            imported = state.reimport()
+        except WorkbookError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return {"imported": imported, **header_payload()}
+
+    @app.get("/api/snapshots")
+    def snapshots() -> dict:
+        return {
+            "snapshots": [
+                {**snapshot, "active": snapshot["fingerprint"] == state.active_fingerprint}
+                for snapshot in state.store.snapshots()
+            ]
+        }
 
     @app.get("/api/snapshots/{fingerprint}/tickets/{excel_row}")
     def ticket(fingerprint: str, excel_row: int) -> dict:

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { fetchHeader, type HeaderResponse } from "./api";
+import { fetchHeader, reimportWorkbook, type HeaderResponse } from "./api";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
 
 type Tab = "overview" | "explore";
@@ -13,6 +13,27 @@ type LoadState =
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [tab, setTab] = useState<Tab>("overview");
+  const [reimportStatus, setReimportStatus] = useState<string>("");
+  const [reimporting, setReimporting] = useState(false);
+
+  async function reimport() {
+    setReimporting(true);
+    setReimportStatus("Reading the workbook again…");
+    try {
+      const result = await reimportWorkbook();
+      setState({ kind: "ready", header: result });
+      setReimportStatus(
+        result.imported
+          ? `The workbook has changed. It is now Snapshot ${result.snapshot.fingerprint.slice(0, 12)}; the previous Snapshot is unchanged.`
+          : "The workbook is unchanged, so the Snapshot stays the same.",
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setReimportStatus(`The workbook was not reimported and the current Snapshot stays active: ${message}`);
+    } finally {
+      setReimporting(false);
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -33,7 +54,15 @@ export function App() {
           <span className="brand-sub">Analytics for one export, every number traceable to its source cells</span>
         </div>
         {state.kind === "ready" ? (
-          <SnapshotHeaderBar header={state.header} />
+          <div className="snapshot-controls">
+            <SnapshotHeaderBar header={state.header} />
+            <button type="button" className="reimport" onClick={reimport} disabled={reimporting}>
+              Reimport
+            </button>
+            <p className="status" role="status">
+              {reimportStatus}
+            </p>
+          </div>
         ) : (
           <p className="status" role="status">
             {state.kind === "loading" ? "Loading the Snapshot header…" : null}
