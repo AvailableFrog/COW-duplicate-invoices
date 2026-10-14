@@ -1,15 +1,12 @@
 """Ticket #3: a workbook missing an optional column loads with the dependent features disabled and explained."""
 
-from conftest import boot, shutdown
+from conftest import running
 from synthetic import ticket, without, write_workbook
 
 
 def header_for(workbook, data_dir) -> dict:
-    booted = boot(workbook, data_dir)
-    try:
+    with running(workbook, data_dir) as booted:
         return booted.get("/api/snapshot").json()["snapshot"]
-    finally:
-        shutdown(booted)
 
 
 def test_missing_supervisor_and_rate_load_and_name_what_is_disabled(tmp_path):

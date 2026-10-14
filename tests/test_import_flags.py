@@ -165,3 +165,10 @@ def test_a_raw_zero_in_time_stays_zero_and_is_not_flagged(flagged):
     assert zero["issues"] == []
     assert cell(fetch(3), "Time")["value"] == 730.43
     assert header["import_issue_count"] == 0
+
+
+def test_a_blank_row_is_one_issue_not_one_per_column(flagged):
+    header, fetch = flagged([ticket(1), None, ticket(2)])
+
+    assert codes(fetch(3)) == [(None, "blank_row")]
+    assert header["import_issue_count"] == 1

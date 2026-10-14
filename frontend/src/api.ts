@@ -3,7 +3,8 @@
 
 export interface ImportIssue {
   excel_row: number;
-  field: string;
+  /** Null for an issue about the whole row, such as a blank row. */
+  field: string | null;
   code: string;
   message: string;
 }

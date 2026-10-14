@@ -1,8 +1,10 @@
-"""Minimal same-schema workbooks built at test time (ADR 0003).
+"""Minimal same-schema workbooks built at test time.
 
 The committed export cannot show a missing column, a bad cell or a second
 Snapshot, so these tests write a small workbook with the export's 22 columns
-into a temporary directory. This is the only synthetic data in release one.
+into a temporary directory. The release-one spec allows exactly this and
+nothing more; the committed synthetic fixture that ADR 0003 defers to release
+two (the 50,000-row performance set) is a different thing.
 """
 
 from __future__ import annotations

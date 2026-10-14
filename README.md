@@ -46,7 +46,7 @@ The Snapshot tables are rebuilt in memory from the workbook on every launch.
 ## Import validation
 
 Only an unreadable or missing workbook, a workbook with no data sheet, or a data sheet missing a required column (or naming a schema column twice) stops the launch, with a message naming the problem.
-The data sheet is the first worksheet with a header row.
+The data sheet is the first worksheet whose header row carries every required column; if none does, the first worksheet with any header is checked and its missing columns are named.
 The required columns are Employee, Ticket Number, Job Number, Date, Time, Regular Hours, Overtime, Double Time, Job Work Pay, Approval Status, Keyed and Created.
 A missing optional column still loads; the header lists the metrics, groupings, checks and displays it disables, each with a reason.
 
@@ -54,6 +54,7 @@ Nothing is dropped or repaired. A cell or business ID that fails validation stay
 
 | Code | Raised when |
 |---|---|
+| `blank_row` | every cell in the row is empty; the row stays a Ticket so later rows keep their numbers, and this is its only issue |
 | `missing_value` | a required cell is empty or only spaces |
 | `missing_business_id` | Ticket Number or ID is empty |
 | `repeated_business_id` | Ticket Number (compared as written) or ID (compared as a whole number) appears on another row |
@@ -78,6 +79,7 @@ Text columns, including Time, are kept raw and not type-checked here; a numeric 
 ## Tests
 
 The one test seam is the HTTP API of the booted application, run against the committed workbook (`docs/adr/0003`).
+A refused launch never reaches HTTP, so those tests assert on the launch command's exit status and error message instead.
 The fixture in `tests/conftest.py` starts the real process on an ephemeral loopback port with a temporary data directory.
 Import-validation tests that need shapes the export does not have build a minimal same-schema workbook at test time with `tests/synthetic.py`.
 

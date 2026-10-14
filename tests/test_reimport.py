@@ -1,6 +1,6 @@
 """Ticket #3: reimporting is idempotent by fingerprint; a different workbook is a new Snapshot."""
 
-from conftest import HANDOFF_WORKBOOK_SHA256, boot, shutdown
+from conftest import HANDOFF_WORKBOOK_SHA256, running
 from synthetic import ticket, without, write_workbook
 
 
@@ -19,8 +19,7 @@ def test_reimporting_the_committed_workbook_keeps_the_same_snapshot(app):
 
 def test_a_different_workbook_at_the_launch_path_becomes_a_new_snapshot(tmp_path):
     workbook = write_workbook(tmp_path / "export.xlsx", [ticket(1), ticket(2)])
-    booted = boot(workbook, tmp_path)
-    try:
+    with running(workbook, tmp_path) as booted:
         first = booted.get("/api/snapshot").json()["snapshot"]
         unchanged = booted.client.post("/api/snapshot/reimport").json()
 
@@ -30,8 +29,6 @@ def test_a_different_workbook_at_the_launch_path_becomes_a_new_snapshot(tmp_path
         listed = booted.get("/api/snapshots").json()["snapshots"]
         old_row_4 = booted.get(f"/api/snapshots/{first['fingerprint']}/tickets/4")
         new_row_4 = booted.get(f"/api/snapshots/{active['fingerprint']}/tickets/4")
-    finally:
-        shutdown(booted)
 
     assert unchanged["imported"] is False
     assert unchanged["snapshot"]["fingerprint"] == first["fingerprint"]
@@ -48,15 +45,12 @@ def test_a_different_workbook_at_the_launch_path_becomes_a_new_snapshot(tmp_path
 
 def test_a_reimport_that_cannot_be_mapped_is_refused_and_the_active_snapshot_stays(tmp_path):
     workbook = write_workbook(tmp_path / "export.xlsx", [ticket(1)])
-    booted = boot(workbook, tmp_path)
-    try:
+    with running(workbook, tmp_path) as booted:
         first = booted.get("/api/snapshot").json()["snapshot"]
         write_workbook(workbook, [ticket(1)], fields=without("Ticket Number"))
         refused = booted.client.post("/api/snapshot/reimport")
         active = booted.get("/api/snapshot").json()["snapshot"]
         listed = booted.get("/api/snapshots").json()["snapshots"]
-    finally:
-        shutdown(booted)
 
     assert refused.status_code == 422
     assert "Ticket Number" in refused.json()["detail"]

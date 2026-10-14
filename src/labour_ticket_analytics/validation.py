@@ -28,7 +28,7 @@ DIGITS = re.compile(r"\d+")
 ISO_DATE_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?")
 
 
-def issue(excel_row: int, field_name: str, code: str, message: str) -> dict[str, Any]:
+def issue(excel_row: int, field_name: str | None, code: str, message: str) -> dict[str, Any]:
     return {"excel_row": excel_row, "field": field_name, "code": code, "message": message}
 
 
@@ -38,6 +38,9 @@ def validate(tickets: Iterable[Ticket]) -> list[dict[str, Any]]:
     rows_by_id = _rows_by_business_id(tickets)
     issues: list[dict[str, Any]] = []
     for ticket in tickets:
+        if all(cell.raw_type == "blank" for cell in ticket.cells):
+            issues.append(issue(ticket.excel_row, None, "blank_row", "every cell in this row is empty"))
+            continue
         for cell in ticket.cells:
             if cell.field in BUSINESS_ID_COLUMNS:
                 problem = _business_id_problem(cell, ticket.excel_row, rows_by_id[cell.field])
@@ -58,7 +61,7 @@ def _business_id(cell: Cell) -> Any:
     if _is_missing(cell):
         return None
     if cell.field == "ID":
-        return whole_number(cell)
+        return _whole_number(cell)
     return str(cell.value)
 
 
@@ -103,7 +106,7 @@ def _cell_problem(cell: Cell) -> tuple[str, str] | None:
         return "error_value", f"{cell.field} holds the spreadsheet error {cell.value}"
     if cell.field in NUMBER_COLUMNS and not _is_number(cell):
         return "invalid_number", f"{cell.field} is {_shown(cell)}, which is not a number"
-    if cell.field in IDENTIFIER_COLUMNS and whole_number(cell) is None:
+    if cell.field in IDENTIFIER_COLUMNS and _whole_number(cell) is None:
         return "invalid_number", (
             f"{cell.field} is {_shown(cell)}, which is not a whole number written without grouping separators"
         )
@@ -127,7 +130,7 @@ def _is_number(cell: Cell) -> bool:
     return cell.raw_type in ("int", "float")
 
 
-def whole_number(cell: Cell) -> int | None:
+def _whole_number(cell: Cell) -> int | None:
     """The integer an identifier cell holds, or None when it holds anything else."""
     if cell.raw_type == "int":
         return cell.value

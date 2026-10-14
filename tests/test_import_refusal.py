@@ -5,7 +5,7 @@ from pathlib import Path
 
 import openpyxl
 
-from conftest import REPO_ROOT, boot, launch_command, shutdown
+from conftest import REPO_ROOT, launch_command, running
 from synthetic import SHEET, ticket, without, write_workbook
 
 
@@ -57,11 +57,8 @@ def test_the_data_sheet_is_the_first_sheet_with_a_header_row(tmp_path):
     book.create_sheet("Cover", 0)
     book.save(workbook)
 
-    booted = boot(workbook, tmp_path)
-    try:
+    with running(workbook, tmp_path) as booted:
         header = booted.get("/api/snapshot").json()["snapshot"]
-    finally:
-        shutdown(booted)
 
     assert header["sheet"] == SHEET
     assert header["row_count"] == 2
@@ -75,3 +72,15 @@ def test_a_schema_column_that_appears_twice_is_refused_as_ambiguous(tmp_path):
     assert result.returncode == 2
     assert "more than once" in result.stderr
     assert "Ticket Number" in result.stderr
+
+
+def test_a_titled_cover_sheet_is_skipped_for_the_sheet_with_the_required_columns(tmp_path):
+    workbook = write_workbook(tmp_path / "titled-cover.xlsx", [ticket(1)])
+    book = openpyxl.load_workbook(workbook)
+    book.create_sheet("Cover", 0).append(["Labour tickets exported for review"])
+    book.save(workbook)
+
+    with running(workbook, tmp_path) as booted:
+        header = booted.get("/api/snapshot").json()["snapshot"]
+
+    assert header["sheet"] == SHEET

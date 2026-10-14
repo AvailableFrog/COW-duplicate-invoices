@@ -10,6 +10,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,6 +70,16 @@ def shutdown(app: BootedApp) -> None:
     except subprocess.TimeoutExpired:
         app.process.kill()
         app.process.wait()
+
+
+@contextmanager
+def running(workbook: Path, data_dir: Path, *extra: str):
+    """Boot the application for the duration of a with-block."""
+    booted = boot(workbook, data_dir, *extra)
+    try:
+        yield booted
+    finally:
+        shutdown(booted)
 
 
 @pytest.fixture(scope="session")

@@ -43,7 +43,7 @@ CREATE TABLE import_issues (
     snapshot_fingerprint VARCHAR NOT NULL,
     issue_order INTEGER NOT NULL,
     excel_row INTEGER NOT NULL,
-    field VARCHAR NOT NULL,
+    field VARCHAR,
     code VARCHAR NOT NULL,
     message VARCHAR NOT NULL,
     PRIMARY KEY (snapshot_fingerprint, issue_order)

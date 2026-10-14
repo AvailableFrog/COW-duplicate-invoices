@@ -103,8 +103,7 @@ def import_workbook(path: Path) -> Snapshot:
             raise WorkbookError(
                 f"workbook has no data sheet: {path.name} has no worksheet with a header row in row {HEADER_ROW}"
             )
-        sheet, header, rows = found
-        fields = tuple(_header_name(cell.value, index) for index, cell in enumerate(header))
+        sheet, fields, rows = found
         missing = missing_required_columns(fields)
         if missing:
             raise WorkbookError(
@@ -133,17 +132,25 @@ def import_workbook(path: Path) -> Snapshot:
 
 
 def _find_data_sheet(book):
-    """The first worksheet whose header row has a value, with its header and remaining rows.
+    """The data sheet with its header row and remaining rows, or None when there is none.
 
-    A cover or notes sheet that is empty is skipped; chart sheets are not
-    worksheets and are never considered.
+    The data sheet is the first worksheet whose header row carries every
+    required column. When no worksheet does, it is the first worksheet with
+    any header at all, so the refusal names the columns that sheet lacks. An
+    empty or titled cover sheet is skipped; chart sheets are never considered.
     """
+    fallback = None
     for sheet in book.worksheets:
         rows = sheet.iter_rows(min_row=HEADER_ROW)
         header = next(rows, None)
-        if header and any(getattr(cell, "value", None) not in (None, "") for cell in header):
-            return sheet, header, rows
-    return None
+        if not header or all(getattr(cell, "value", None) in (None, "") for cell in header):
+            continue
+        fields = tuple(_header_name(cell.value, index) for index, cell in enumerate(header))
+        if not missing_required_columns(fields):
+            return sheet, fields, rows
+        if fallback is None:
+            fallback = (sheet, fields, rows)
+    return fallback
 
 
 def _header_name(value: Any, index: int) -> str:
