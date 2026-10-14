@@ -1,9 +1,10 @@
 """The single launch command.
 
-    labour-ticket-analytics "data/Labour Tickets Export.xlsx" [--port N] [--as-of YYYY-MM-DD]
+    labour-ticket-analytics "data/Labour Tickets Export.xlsx" [--port N] [--as-of YYYY-MM-DD] [--data-dir PATH]
 
-Imports the workbook as a Snapshot, binds to loopback only, and serves the API
-and the built frontend from the same port. Port 0 picks an ephemeral port; the
+Imports the workbook as a Snapshot, opens the local review file in the data
+directory, binds to loopback only, and serves the API and the built frontend
+from the same port. Port 0 picks an ephemeral port; the
 address actually in use is printed as "Listening on http://127.0.0.1:PORT".
 """
 
@@ -20,6 +21,7 @@ from pathlib import Path
 import uvicorn
 
 from labour_ticket_analytics.api import DEFAULT_AS_OF, AppState, create_app
+from labour_ticket_analytics.review import ReviewStore, ReviewStoreUnavailable
 from labour_ticket_analytics.store import SnapshotStore
 from labour_ticket_analytics.workbook import WorkbookError, import_workbook
 
@@ -75,10 +77,10 @@ def main(argv: list[str] | None = None) -> int:
         store = SnapshotStore()
         store.add_snapshot(snapshot)
         elapsed = time.perf_counter() - started
-    except (LaunchError, WorkbookError) as error:
+        review = ReviewStore.in_data_dir(args.data_dir)
+    except (LaunchError, WorkbookError, ReviewStoreUnavailable) as error:
         print(f"error: {error}", file=sys.stderr, flush=True)
         return 2
-    args.data_dir.mkdir(parents=True, exist_ok=True)
     print(
         f"Imported {snapshot.workbook_name} as Snapshot {snapshot.fingerprint[:12]}: "
         f"{snapshot.row_count} rows, {snapshot.field_count} fields, "
@@ -86,13 +88,21 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
     state = AppState(
-        store=store, active_fingerprint=snapshot.fingerprint, as_of=args.as_of, workbook_path=args.workbook.resolve()
+        store=store,
+        active_fingerprint=snapshot.fingerprint,
+        as_of=args.as_of,
+        workbook_path=args.workbook.resolve(),
+        review=review,
     )
     app = create_app(state)
-    sock = bind(args.host, args.port)
-    bound_host, bound_port = sock.getsockname()[:2]
-    url_host = f"[{bound_host}]" if ":" in bound_host else bound_host
-    print(f"Listening on http://{url_host}:{bound_port}", flush=True)
-    config = uvicorn.Config(app, host=bound_host, port=bound_port, log_level="warning", access_log=False)
-    uvicorn.Server(config).run(sockets=[sock])
+    try:
+        sock = bind(args.host, args.port)
+        bound_host, bound_port = sock.getsockname()[:2]
+        url_host = f"[{bound_host}]" if ":" in bound_host else bound_host
+        print(f"Local review data: {review.path.resolve()}", flush=True)
+        print(f"Listening on http://{url_host}:{bound_port}", flush=True)
+        config = uvicorn.Config(app, host=bound_host, port=bound_port, log_level="warning", access_log=False)
+        uvicorn.Server(config).run(sockets=[sock])
+    finally:
+        review.close()
     return 0

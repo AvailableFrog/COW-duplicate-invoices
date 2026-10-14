@@ -126,12 +126,21 @@ export interface Member {
   in_filter: boolean;
 }
 
+export type OutcomeId = "not_reviewed" | "confirmed_duplicate" | "not_a_duplicate" | "replacement_ticket" | "needs_follow_up";
+
+export interface OutcomeLabel {
+  id: OutcomeId;
+  label: string;
+}
+
 export interface Candidate {
   excel_rows: [number, number];
   rule_id: string;
   fields_compared: string[];
   evidence_strength: string;
   reason: string;
+  /** The Review Outcome saved on this Candidate's Ticket pair; Not reviewed when none. Display only, never a rank input. */
+  outcome: OutcomeLabel;
 }
 
 export interface PriorityTier {
@@ -252,6 +261,67 @@ export interface Annotation {
   tickets: { ticket_number: string; excel_row: number | null; report_excel_row: number; in_possible_duplicate: boolean }[];
 }
 
+export interface OutcomeValue extends OutcomeLabel {
+  definition: string;
+}
+
+/** A Ticket pair's Review Outcome; `saved` is false (and reviewer null) until someone saves one. */
+export interface PairOutcome {
+  excel_rows: [number, number];
+  ticket_numbers: [string | null, string | null];
+  outcome: OutcomeLabel;
+  note: string;
+  reference: string;
+  reviewer: string | null;
+  recorded_at: string | null;
+  saved: boolean;
+}
+
+/** One replaced Ticket and one kept (retained) Ticket; a replaced Ticket may have several. */
+export interface ReplacementLink {
+  replaced_row: number;
+  retained_row: number;
+  replaced_ticket_number: string | null;
+  retained_ticket_number: string | null;
+  reviewer: string;
+  recorded_at: string;
+  rationale: string;
+}
+
+export interface OutcomeHistoryValue {
+  outcome: OutcomeLabel;
+  note: string;
+  reference: string;
+}
+
+export interface LinkHistoryValue {
+  replaced_row: number;
+  retained_row: number;
+  replaced_ticket_number: string | null;
+  retained_ticket_number: string | null;
+}
+
+export type HistoryEntry = {
+  entry: number;
+  /** For an outcome the pair, lower row first; for a link the replaced row, then the kept row. */
+  excel_rows: [number, number];
+  ticket_numbers: [string | null, string | null];
+  reviewer: string;
+  recorded_at: string;
+  rationale: string;
+} & (
+  | { kind: "outcome"; previous: OutcomeHistoryValue | null; new: OutcomeHistoryValue | null }
+  | { kind: "link"; previous: LinkHistoryValue | null; new: LinkHistoryValue | null }
+);
+
+export interface PossibleDuplicateReview {
+  outcome_values: OutcomeValue[];
+  pairs: (PairOutcome & { rule_ids: string[] })[];
+  links: ReplacementLink[];
+  /** Newest first. */
+  history: HistoryEntry[];
+}
+
 export interface EvidenceResponse extends Provenance {
   display_id: string;
   tier: PriorityTier;
@@ -266,6 +336,7 @@ export interface EvidenceResponse extends Provenance {
   fields: SourceFieldRow[];
   differing_fields: string[];
   annotations: Annotation[];
+  review: PossibleDuplicateReview;
 }
 
 async function failure(response: Response): Promise<Error> {
@@ -346,4 +417,55 @@ export async function reimportWorkbook(): Promise<ReimportResponse> {
   const response = await fetch("/api/snapshot/reimport", { method: "POST" });
   if (!response.ok) throw await failure(response);
   return (await response.json()) as ReimportResponse;
+}
+
+async function sendJson<T>(method: "PUT" | "DELETE", path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await failure(response);
+  return (await response.json()) as T;
+}
+
+export interface OutcomeChange {
+  outcome: OutcomeId;
+  note: string;
+  reference: string;
+  reviewer: string;
+  rationale: string;
+}
+
+/** Save a Review Outcome on a Ticket pair; either row order names the same pair. */
+export function saveOutcome(
+  fingerprint: string,
+  pair: [number, number],
+  change: OutcomeChange,
+): Promise<PairOutcome & { changed: boolean; history: HistoryEntry[] }> {
+  return sendJson("PUT", `/api/snapshots/${encodeURIComponent(fingerprint)}/pairs/${pair[0]}/${pair[1]}/outcome`, change);
+}
+
+function linkPath(fingerprint: string, replacedRow: number, retainedRow: number): string {
+  return `/api/snapshots/${encodeURIComponent(fingerprint)}/replacement-links/${replacedRow}/${retainedRow}`;
+}
+
+/** Record that one Ticket was replaced and another kept. */
+export function linkReplacement(
+  fingerprint: string,
+  replacedRow: number,
+  retainedRow: number,
+  change: { reviewer: string; rationale: string },
+): Promise<ReplacementLink & { changed: boolean }> {
+  return sendJson("PUT", linkPath(fingerprint, replacedRow, retainedRow), change);
+}
+
+/** Remove a kept/replaced link; the history keeps what it was. */
+export function unlinkReplacement(
+  fingerprint: string,
+  replacedRow: number,
+  retainedRow: number,
+  change: { reviewer: string; rationale: string },
+): Promise<ReplacementLink & { removed: boolean }> {
+  return sendJson("DELETE", linkPath(fingerprint, replacedRow, retainedRow), change);
 }

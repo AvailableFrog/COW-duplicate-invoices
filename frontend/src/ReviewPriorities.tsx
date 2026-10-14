@@ -1,5 +1,14 @@
 import type { Member, PossibleDuplicate, ReviewPrioritiesResponse } from "./api";
 
+/** The saved Review Outcomes of a possible duplicate's pairs in words; null when none is reviewed. */
+function reviewSummary(item: PossibleDuplicate): string | null {
+  const reviewed = item.candidates.filter((candidate) => candidate.outcome.id !== "not_reviewed");
+  if (reviewed.length === 0) return null;
+  const labels = [...new Set(reviewed.map((candidate) => candidate.outcome.label))].join(", ");
+  const pairs = new Set(item.candidates.map((candidate) => candidate.excel_rows.join("-"))).size;
+  return pairs === 1 ? labels : `${labels} (${new Set(reviewed.map((c) => c.excel_rows.join("-"))).size} of ${pairs} pairs reviewed)`;
+}
+
 /** One ticket's source state in words; a blank Keyed or status stays visible as unknown. */
 function sourceState(member: Member): string {
   const status = member.status ?? "Unknown status";
@@ -23,6 +32,7 @@ function MemberLine({ member }: { member: Member }) {
 export type OpenEvidence = (item: PossibleDuplicate, opener: HTMLButtonElement) => void;
 
 function PriorityRow({ item, onOpen }: { item: PossibleDuplicate; onOpen: OpenEvidence }) {
+  const review = reviewSummary(item);
   return (
     <tr>
       <td className="num">{item.rank}</td>
@@ -47,6 +57,12 @@ function PriorityRow({ item, onOpen }: { item: PossibleDuplicate; onOpen: OpenEv
           ))}
         </ul>
         <p className="priority-summary">{item.summary}</p>
+        {review ? (
+          <p className="priority-review">
+            <span className="muted">Review outcome: </span>
+            {review}
+          </p>
+        ) : null}
       </td>
       <td>
         <ul className="members">

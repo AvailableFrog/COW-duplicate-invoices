@@ -40,6 +40,8 @@ export function App() {
   const [prioritiesError, setPrioritiesError] = useState("");
   // Bumped whenever the Snapshot or as-of date changes, so every view refetches its numbers.
   const [generation, setGeneration] = useState(0);
+  // Bumped after a review save so the ranked list shows the outcomes; review never changes the other numbers.
+  const [reviewGeneration, setReviewGeneration] = useState(0);
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
   const drawerOpener = useRef<HTMLElement | null>(null);
 
@@ -131,7 +133,7 @@ export function App() {
         setPrioritiesError(error instanceof Error ? error.message : String(error));
       });
     return () => controller.abort();
-  }, [filters, generation]);
+  }, [filters, generation, reviewGeneration]);
 
   return (
     <div className="app">
@@ -211,7 +213,12 @@ export function App() {
           </section>
         )}
       </main>
-      <EvidenceDrawer target={drawer} filters={filters} onClose={closeEvidence} />
+      <EvidenceDrawer
+        target={drawer}
+        filters={filters}
+        onClose={closeEvidence}
+        onReviewChange={() => setReviewGeneration((value) => value + 1)}
+      />
     </div>
   );
 }

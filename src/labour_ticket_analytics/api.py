@@ -16,6 +16,7 @@ from labour_ticket_analytics import __version__
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
+from labour_ticket_analytics.review import ReviewError, ReviewStore, outcome_label, pair_key
 from labour_ticket_analytics.rules import RULES, TIERS
 from labour_ticket_analytics.store import SnapshotStore
 from labour_ticket_analytics.timeparse import PARSER_VERSION, TimeParse, compare
@@ -67,6 +68,7 @@ class AppState:
     active_fingerprint: str
     as_of: dt.date
     workbook_path: Path
+    review: ReviewStore
     frontend_dist: Path = FRONTEND_DIST
     import_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -94,6 +96,23 @@ class AppState:
 
 class AsOfChange(BaseModel):
     date: dt.date
+
+
+class OutcomeChange(BaseModel):
+    """A Review Outcome saved on a Ticket pair, with who saved it and why."""
+
+    outcome: str
+    note: str = ""
+    reference: str = ""
+    reviewer: str
+    rationale: str = ""
+
+
+class LinkChange(BaseModel):
+    """Who makes or removes a kept/replaced link, and why."""
+
+    reviewer: str
+    rationale: str = ""
 
 
 def filter_query(
@@ -163,6 +182,38 @@ def create_app(state: AppState) -> FastAPI:
         except MetricError as error:
             raise HTTPException(status_code=422, detail=error.payload()) from error
 
+    def with_outcomes(fingerprint: str, item: dict, saved: dict | None = None) -> dict:
+        """A possible duplicate whose Candidates each carry their pair's Review Outcome, Not reviewed by default.
+
+        Display only: the outcome never changes the tier or rank.
+        """
+        saved = state.review.outcomes(fingerprint) if saved is None else saved
+        candidates = [
+            {
+                **candidate,
+                "outcome": saved[pair_key(*candidate["excel_rows"])]["outcome"]
+                if pair_key(*candidate["excel_rows"]) in saved else outcome_label("not_reviewed"),
+            }
+            for candidate in item["candidates"]
+        ]
+        return {**item, "candidates": candidates}
+
+    def with_review(fingerprint: str, payload: dict) -> dict:
+        """The evidence with its review block: an outcome per Candidate pair, the links and history of its members."""
+        numbers = {member["excel_row"]: member["ticket_number"] for member in payload["members"]}
+        pairs: dict[tuple[int, int], set[str]] = {}
+        for candidate in payload["candidates"]:
+            pairs.setdefault(pair_key(*candidate["excel_rows"]), set()).add(candidate["rule_id"])
+        review = state.review.for_possible_duplicate(
+            fingerprint,
+            [
+                {"excel_rows": list(pair), "ticket_numbers": [numbers[pair[0]], numbers[pair[1]]], "rule_ids": sorted(rule_ids)}
+                for pair, rule_ids in sorted(pairs.items())
+            ],
+            list(numbers),
+        )
+        return {**with_outcomes(fingerprint, payload), "review": review}
+
     @app.get("/api/snapshot")
     def snapshot_header() -> dict:
         return header_payload()
@@ -218,8 +269,11 @@ def create_app(state: AppState) -> FastAPI:
     def review_priorities(query: dict = Depends(filter_query)) -> dict:
         fingerprint = state.active_fingerprint
         filters = active_filters(fingerprint, query)
+        saved = state.review.outcomes(fingerprint)
         return {
-            "possible_duplicates": state.store.possible_duplicates(fingerprint, filters),
+            "possible_duplicates": [
+                with_outcomes(fingerprint, item, saved) for item in state.store.possible_duplicates(fingerprint, filters)
+            ],
             "tiers": [tier.payload() for tier in TIERS],
             "rules": [rule.payload() for rule in RULES.values()],
             "note": REVIEW_PRIORITIES_NOTE,
@@ -288,7 +342,88 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(
                 status_code=404, detail=f"the Ticket at Excel row {excel_row} is in no possible duplicate"
             )
-        return {**payload, **context(fingerprint)}
+        return {**with_review(fingerprint, payload), **context(fingerprint)}
+
+    def require_snapshot(fingerprint: str) -> None:
+        if not state.store.has_snapshot(fingerprint):
+            raise HTTPException(status_code=404, detail=f"no Snapshot {fingerprint[:12]}")
+
+    def review_failure(error: ReviewError) -> HTTPException:
+        return HTTPException(status_code=error.status, detail=error.payload())
+
+    def candidate_pair(fingerprint: str, first_row: int, second_row: int) -> tuple[int, int]:
+        """The pair key, or 404 unless a Candidate links the two Tickets: outcomes attach to Candidate pairs only."""
+        require_snapshot(fingerprint)
+        if first_row == second_row or not state.store.candidate_rule_ids(fingerprint, first_row, second_row):
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "no_candidate",
+                    "field": "excel_rows",
+                    "message": f"no Candidate links rows {first_row} and {second_row} in Snapshot {fingerprint[:12]}",
+                },
+            )
+        return pair_key(first_row, second_row)
+
+    @app.get("/api/snapshots/{fingerprint}/review")
+    def review_summary(fingerprint: str) -> dict:
+        require_snapshot(fingerprint)
+        return {**state.review.summary(fingerprint), **context(fingerprint)}
+
+    @app.get("/api/snapshots/{fingerprint}/pairs/{first_row}/{second_row}/outcome")
+    def pair_outcome(fingerprint: str, first_row: int, second_row: int) -> dict:
+        pair = candidate_pair(fingerprint, first_row, second_row)
+        numbers = state.store.ticket_numbers(fingerprint, pair)
+        return {**state.review.outcome(fingerprint, *pair, numbers), **context(fingerprint)}
+
+    @app.put("/api/snapshots/{fingerprint}/pairs/{first_row}/{second_row}/outcome")
+    def save_pair_outcome(fingerprint: str, first_row: int, second_row: int, change: OutcomeChange, request: Request) -> dict:
+        require_same_origin(request)
+        pair = candidate_pair(fingerprint, first_row, second_row)
+        numbers = state.store.ticket_numbers(fingerprint, pair)
+        try:
+            saved = state.review.save_outcome(fingerprint, *pair, numbers, **change.model_dump())
+        except ReviewError as error:
+            raise review_failure(error) from error
+        return {**saved, **context(fingerprint)}
+
+    def linkable(fingerprint: str, replaced_row: int, retained_row: int) -> None:
+        """Both Tickets must sit in one possible duplicate, so every link is made from the evidence."""
+        for row in (replaced_row, retained_row):
+            if state.store.ticket(fingerprint, row) is None:
+                raise no_ticket(fingerprint, row)
+        if retained_row not in state.store.possible_duplicate_rows(fingerprint, replaced_row):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "not_in_one_possible_duplicate",
+                    "field": "retained_row",
+                    "message": f"rows {replaced_row} and {retained_row} are not in the same possible duplicate",
+                },
+            )
+
+    @app.put("/api/snapshots/{fingerprint}/replacement-links/{replaced_row}/{retained_row}")
+    def make_link(fingerprint: str, replaced_row: int, retained_row: int, change: LinkChange, request: Request) -> dict:
+        require_same_origin(request)
+        require_snapshot(fingerprint)
+        if replaced_row != retained_row:
+            linkable(fingerprint, replaced_row, retained_row)
+        numbers = state.store.ticket_numbers(fingerprint, (replaced_row, retained_row))
+        try:
+            link = state.review.link(fingerprint, replaced_row, retained_row, numbers, **change.model_dump())
+        except ReviewError as error:
+            raise review_failure(error) from error
+        return {**link, **context(fingerprint)}
+
+    @app.delete("/api/snapshots/{fingerprint}/replacement-links/{replaced_row}/{retained_row}")
+    def remove_link(fingerprint: str, replaced_row: int, retained_row: int, change: LinkChange, request: Request) -> dict:
+        require_same_origin(request)
+        require_snapshot(fingerprint)
+        try:
+            link = state.review.unlink(fingerprint, replaced_row, retained_row, **change.model_dump())
+        except ReviewError as error:
+            raise review_failure(error) from error
+        return {**link, **context(fingerprint)}
 
     @app.get("/api/snapshots/{fingerprint}/time-parses")
     def time_parse_summary(fingerprint: str) -> dict:

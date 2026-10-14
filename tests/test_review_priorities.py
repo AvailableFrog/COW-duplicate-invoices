@@ -90,6 +90,8 @@ def test_every_candidate_carries_its_rule_fields_compared_evidence_strength_and_
             "fields_compared": STRICT_FIELDS,
             "evidence_strength": "strong",
             "reason": peter["candidates"][0]["reason"],
+            # Ticket #8: each pair's Review Outcome rides along for display; nothing is saved in this session.
+            "outcome": {"id": "not_reviewed", "label": "Not reviewed"},
         }
     ]
     assert "Same claim submitted twice" in peter["candidates"][0]["reason"]

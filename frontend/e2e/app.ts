@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import { test as base } from "@playwright/test";
+import { test as base, type Locator, type Page } from "@playwright/test";
 
 export const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const COMMITTED_WORKBOOK = join(REPO_ROOT, "data", "Labour Tickets Export.xlsx");
@@ -89,3 +89,12 @@ export const test = base.extend<object, { app: RunningApp }>({
 });
 
 export { expect } from "@playwright/test";
+
+/** Press Tab until the named control has focus, proving it is reachable by keyboard alone. */
+export async function tabTo(page: Page, target: Locator, limit = 150): Promise<void> {
+  for (let presses = 0; presses < limit; presses += 1) {
+    await page.keyboard.press("Tab");
+    if (await target.evaluate((element) => element === document.activeElement)) return;
+  }
+  throw new Error(`not reached by keyboard within ${limit} Tab presses`);
+}

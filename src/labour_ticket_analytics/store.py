@@ -6,8 +6,8 @@ index. Each Ticket's Time cell is also parsed once at import and the parse
 results are kept beside the tables, keyed by Excel row. The matching rules run
 at import too and their Candidates are stored as relationship edges, apart
 from the Tickets; Possible Duplicates are recomposed from them on every read.
-Local review data (a later ticket) lives in a separate file and is never
-mixed into these tables.
+Local review data lives in a separate file (review.py) and is never mixed
+into these tables.
 """
 
 from __future__ import annotations
@@ -381,6 +381,33 @@ class SnapshotStore:
                 [fingerprint, list(ticket_numbers)],
             ).fetchall()
         return dict(rows)
+
+    def ticket_numbers(self, fingerprint: str, excel_rows: Iterable[int]) -> dict[int, str | None]:
+        """Each Ticket's ticket number as written, by Excel row; None where it is blank."""
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT excel_row, ticket_number FROM ticket_values"
+                " WHERE snapshot_fingerprint = ? AND list_contains(?, excel_row)",
+                [fingerprint, list(excel_rows)],
+            ).fetchall()
+        return dict(rows)
+
+    def candidate_rule_ids(self, fingerprint: str, first_row: int, second_row: int) -> list[str]:
+        """The rules with a Candidate linking two Tickets, in either order; empty when none does."""
+        with self._lock:
+            return sorted(
+                candidate.rule_id for candidate in self._candidates(fingerprint)
+                if {candidate.first_row, candidate.second_row} == {first_row, second_row}
+            )
+
+    def possible_duplicate_rows(self, fingerprint: str, excel_row: int) -> set[int]:
+        """The member Excel rows of the Possible Duplicate holding a Ticket; empty when it is in none."""
+        with self._lock:
+            for component in rules.compose(self._candidates(fingerprint)):
+                rows = {row for candidate in component for row in (candidate.first_row, candidate.second_row)}
+                if excel_row in rows:
+                    return rows
+        return set()
 
     def _candidates(self, fingerprint: str) -> list[rules.Candidate]:
         return [
