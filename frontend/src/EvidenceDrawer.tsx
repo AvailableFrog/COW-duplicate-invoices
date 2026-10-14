@@ -133,7 +133,11 @@ function AnnotationPanel({ annotation }: { annotation: Annotation }) {
         Pattern {annotation.pattern.number}: {annotation.pattern.title}. {annotation.summary}
       </p>
       <figure className="review-note">
-        <figcaption>Review note (condensed paraphrase from the evidence report)</figcaption>
+        <figcaption>
+          {annotation.review_note_reworded
+            ? "Review note (condensed paraphrase, reworded to the display language)"
+            : "Review note (condensed paraphrase from the evidence report)"}
+        </figcaption>
         {annotation.review_note ? (
           <blockquote>{annotation.review_note}</blockquote>
         ) : (
@@ -147,6 +151,7 @@ function AnnotationPanel({ annotation }: { annotation: Annotation }) {
         ))}
       </ol>
       <p className="muted">What the answer changes: {annotation.what_the_answer_changes}</p>
+      <p className="muted">Evidence report section: {annotation.source_section}.</p>
       {annotation.tickets.some((ticket) => !ticket.in_possible_duplicate) ? (
         <p className="muted">
           The example also names{" "}

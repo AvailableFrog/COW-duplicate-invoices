@@ -196,8 +196,11 @@ def test_the_peter_holder_possible_duplicate_carries_annotation_c_with_its_note_
     assert [annotation["letter"] for annotation in annotations] == ["C"]
     c = annotations[0]
     assert c["title"] == "Peter Holder: priority example"
-    assert c["review_note"].startswith("This looks like the strongest example of an undetected duplicate")
+    # Reworded from the report so no banned phrase reaches a screen; the section names where the original stays.
+    assert c["review_note"].startswith("This looks like the strongest example of a repeat claim that was not flagged")
     assert "ask Oliver whether it was handled somewhere we cannot see" in c["review_note"]
+    assert c["review_note_reworded"] is True
+    assert c["source_section"] == "Pattern 1: The same claim appears twice > C. Peter Holder: priority example"
     assert c["questions_for_oliver"] == [
         "Were these caught or missed? If caught, where is that decision recorded when both retain nonzero job numbers?",
         "For Peter’s pair, show which ticket was retained and trace both through accounting and payment. "
@@ -207,6 +210,26 @@ def test_the_peter_holder_possible_duplicate_carries_annotation_c_with_its_note_
         ("L225526", 855, True),
         ("L225761", 620, True),
     ]
+
+
+BANNED_PHRASES = ("paid twice", "missed duplicate", "fraud")
+
+
+def strings(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in strings(item)]
+    if isinstance(value, list):
+        return [text for item in value for text in strings(item)]
+    return []
+
+
+def test_no_annotation_text_uses_a_banned_phrase(app):
+    texts = [text.casefold() for text in strings(app.get("/api/annotations").json()["examples"])]
+
+    assert texts
+    assert [text for text in texts if any(phrase in text for phrase in BANNED_PHRASES)] == []
 
 
 def test_a_possible_duplicate_with_no_annotated_ticket_carries_no_annotation(app):

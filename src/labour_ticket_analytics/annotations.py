@@ -3,7 +3,10 @@
 `annotations.json` was extracted from docs/source/labour-ticket-report-readable.md.
 Each ticket number names its A-N example; each example carries its title,
 pattern, summary, the requester's condensed review note (null where the report
-gives none) and its pattern's questions for Oliver. Ticket numbers survive a
+gives none), its pattern's questions for Oliver and the report section it comes
+from. Notes are quoted verbatim except where `review_note_reworded` is true:
+C and D were reworded so no screen shows a banned phrase such as "paid twice"
+(decision-log entry 29); the original wording stays in the named section. Ticket numbers survive a
 re-export where Excel rows may not, so attachment is by ticket number only;
 the report's Excel row is kept for reference and never used to attach.
 

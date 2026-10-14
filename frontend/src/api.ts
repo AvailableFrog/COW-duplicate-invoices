@@ -243,6 +243,10 @@ export interface Annotation {
   summary: string;
   /** The requester's condensed review note; null where the evidence report gives none. */
   review_note: string | null;
+  /** True where the note was reworded so no banned phrase reaches a screen; source_section holds the original. */
+  review_note_reworded: boolean;
+  /** Where the example sits in the evidence report. */
+  source_section: string;
   questions_for_oliver: string[];
   what_the_answer_changes: string;
   tickets: { ticket_number: string; excel_row: number | null; report_excel_row: number; in_possible_duplicate: boolean }[];

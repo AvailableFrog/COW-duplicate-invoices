@@ -121,7 +121,7 @@ On the committed workbook the Strict repeat rule finds 34 two-ticket possible du
 Selecting a possible duplicate opens a wide drawer (a modal dialog; Escape or Close returns to the list) so it can be investigated without opening Excel:
 
 - **Why these tickets are together**: the reason in words, every Candidate with its rule, the two Excel rows, the fields compared, the evidence strength and how the two tickets' work periods compare, and the members' states ticket by ticket (status, Keyed, flagged duplicate), never a paid or unpaid summary.
-- **Annotations**: when a member's ticket number is one of the evidence report's 29 example Tickets, its example letter (A-N), title, pattern, the condensed review note and the questions for Oliver, quoted from `docs/source/labour-ticket-report-readable.md`. A possible duplicate with no annotated ticket shows none.
+- **Annotations**: when a member's ticket number is one of the evidence report's 29 example Tickets, its example letter (A-N), title, pattern, the condensed review note, the questions for Oliver and the report section they come from (`docs/source/labour-ticket-report-readable.md`). A possible duplicate with no annotated ticket shows none.
 - **Claim timeline**: the members in Created order with Date, Created, Modified, Date Approved and Supervisor.
 - **Source rows, side by side**: all source columns transposed, the field-name column fixed while the ticket columns scroll, each differing field highlighted and marked "Differs". A value differs when its text (exactly as written, spaces included), number, date, true/false or blank differs; 8 and 8.0 are the same number, but 0, false, blank and the text "0" are four different values. Cells render as text, never HTML, keeping line breaks and spaces; "Show whitespace" quotes text and draws spaces (·), tabs (→) and line breaks (↵) without changing the values.
 - **Time as parsed**: each member's raw Time, parse status, each period's confidence, interval and Plausible Reading (labelled assumed), and the parser version.
@@ -130,6 +130,7 @@ Selecting a possible duplicate opens a wide drawer (a modal dialog; Escape or Cl
 Annotations live in `src/labour_ticket_analytics/annotations.json`, extracted once from the evidence report and keyed by ticket number; the report's Excel row is kept for reference only.
 They attach by ticket number, so they survive a re-export, and no matching rule reads them.
 Each example carries its pattern's numbered questions for Oliver, since the report asks its questions per pattern; E and F have no review note in the report.
+Notes are quoted verbatim except C and D, reworded (and marked `review_note_reworded`) so no screen shows "paid twice", "missed duplicate" or "fraud"; `source_section` names where the original wording stays.
 
 ## API
 
@@ -146,7 +147,7 @@ Each example carries its pattern's numbered questions for Oliver, since the repo
 | `GET /api/filters` | what the filter bar offers: date bases with their date spans, statuses and jobs with Ticket counts |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}` | one Ticket: its Excel row, dataframe index (Excel row minus 2), sheet, its import issues, and all cells with field name, position, raw type, raw value and number format. Blank cells have raw type `blank` and a null value; a numeric zero stays `0`; booleans stay `true` or `false`; dates are ISO 8601 text with raw type `datetime`; formulas have raw type `formula` and their formula text |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}/possible-duplicate` | the evidence for the possible duplicate holding that Ticket; any member's row gives the same answer, and the display name is never the address. `display_id`, `tier`, `pattern_labels`, `reason`, `candidates` (each with `rule_label` and `time_comparison`), `status_breakdown` (member states, never payment), `members` (with `provenance`, `issues` and `time_parse`), `timeline` (members by Created with Date, Created, Modified, Date Approved, Supervisor), `fields` (one row per source column with `differs` and each member's raw type and value), `differing_fields` and `annotations`. Takes the filter parameters to label out-of-filter members. 404 when the Ticket is in no possible duplicate |
-| `GET /api/annotations` | the evidence report's 14 examples (A-N) with title, pattern, summary, `review_note` (null where the report has none), `questions_for_oliver` and their 29 ticket numbers, each with its Excel row in the active Snapshot |
+| `GET /api/annotations` | the evidence report's 14 examples (A-N) with title, pattern, summary, `review_note` (null where the report has none; `review_note_reworded` marks C and D), `source_section`, `questions_for_oliver` and their 29 ticket numbers, each with its Excel row in the active Snapshot |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}/time` | the Ticket's Time cell as parsed: raw type and value, parser version, status, each period with its text, confidence (`confident` or `ambiguous`), interval, Plausible Reading (`assumed: true`), flags and notes, the union of its Confident Intervals, and notes on the status |
 | `GET /api/snapshots/{fingerprint}/time-parses` | how every Time cell in the Snapshot parsed: Ticket counts and Excel rows by status and raw type |
 | `GET /api/snapshots/{fingerprint}/time-comparison?excel_row=A&excel_row=B` | whether two Tickets' work periods overlap: `result`, `basis`, `assumed`, the `intersection` and `overlap_minutes`, an explanation, and both parse results. Exactly two rows, or 422 |
@@ -166,7 +167,7 @@ Tests that need shapes the export does not have build a minimal same-schema work
 
 ```sh
 uv run pytest                             # API tests
-npm --prefix frontend run typecheck       # TypeScript
+npm --prefix frontend run typecheck       # TypeScript, app and frontend/e2e
 npm --prefix frontend run build           # then the browser tests, which need the built frontend
 npm --prefix frontend run e2e             # Playwright flows in frontend/e2e against the running process
 ```
