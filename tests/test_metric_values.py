@@ -110,3 +110,22 @@ def test_source_rows_behind_a_metric_can_be_listed(app):
     first = app.get(f"/api/snapshots/{body['snapshot_fingerprint']}/tickets/{body['contributing_rows'][0]}").json()
     cells = {cell["field"]: cell["value"] for cell in first["cells"]}
     assert (cells["Approval Status"], cells["Job Number"]) == ("Approved", 0)
+
+
+def test_unpriced_labour_counts_every_usable_hour_and_zero_hours_need_no_rate(tmp_path):
+    workbook = write_workbook(
+        tmp_path / "rates.xlsx",
+        [
+            ticket(1, Rate=None, Regular_Hours=8, Overtime="two", Job_Work_Pay=10),
+            ticket(2, Rate=None, Regular_Hours=0, Overtime=0, Double_Time=0, Job_Work_Pay=None),
+            ticket(3, Rate=10, Regular_Hours=1, Overtime=0, Double_Time=0, Job_Work_Pay=0.005),
+        ],
+    )
+    with running(workbook, tmp_path) as booted:
+        body = booted.get("/api/metrics/known_base_value_bbd").json()
+
+    assert body["value"] == 20.01
+    assert body["coverage"]["excluded"] == []
+    assert [(item["code"], item["excel_rows"], item["quantity"]) for item in body["coverage"]["partial"]] == [
+        ("unpriced_labour", [2], 8),
+    ]

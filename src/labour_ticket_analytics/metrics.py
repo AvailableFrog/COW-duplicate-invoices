@@ -10,9 +10,9 @@ bumping REGISTRY_VERSION, because every response carries it.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import duckdb
 
@@ -38,7 +38,16 @@ LABOUR_VALUE_SQL = (
     "CAST(t.rate AS DECIMAL(18, 4)) * (CAST(t.regular_hours AS DECIMAL(18, 4))"
     " + CAST(t.overtime AS DECIMAL(18, 4)) + CAST(t.double_time AS DECIMAL(18, 4)))"
 )
-LABOUR_KNOWN_SQL = f"(t.rate IS NOT NULL AND NOT {HOURS_UNUSABLE_SQL})"
+# Labour is known when every hour component is usable and either a Rate is recorded or no hours are claimed.
+LABOUR_KNOWN_SQL = f"(NOT {HOURS_UNUSABLE_SQL} AND (t.rate IS NOT NULL OR {CLAIMED_HOURS_SQL} = 0))"
+# The hours left unpriced: every usable component, so an invalid one does not hide the others.
+USABLE_HOURS_SQL = "(COALESCE(t.regular_hours, 0) + COALESCE(t.overtime, 0) + COALESCE(t.double_time, 0))"
+
+Aggregation = Literal["count", "count_distinct", "sum", "distribution", "rule"]
+# The statistic each aggregation reports as a metric's value.
+STATISTICS: dict[str, str] = {
+    "count": "count", "count_distinct": "distinct count", "sum": "sum", "distribution": "median", "rule": "count",
+}
 
 
 @dataclass(frozen=True)
@@ -68,7 +77,7 @@ class Metric:
     definition: str
     unit: str
     grain: str
-    aggregation: str  # count | count_distinct | sum | distribution | rule
+    aggregation: Aggregation
     null_treatment: str
     lineage: str
     exclusions_text: tuple[str, ...] = ()
@@ -81,14 +90,10 @@ class Metric:
     share_of: str | None = None
     requires_columns: tuple[str, ...] = ()
     resolved_by: str | None = None
-    statistic: str = field(init=False)
 
-    def __post_init__(self) -> None:
-        statistic = {
-            "count": "count", "count_distinct": "distinct count", "sum": "sum", "distribution": "median",
-            "rule": "count",
-        }[self.aggregation]
-        object.__setattr__(self, "statistic", statistic)
+    @property
+    def statistic(self) -> str:
+        return STATISTICS[self.aggregation]
 
     def availability(self, fields: tuple[str, ...] | list[str]) -> dict[str, str | None]:
         if self.resolved_by is not None:
@@ -142,7 +147,7 @@ def _age_metric(metric_id: str, label: str, population: str, scope: str) -> Metr
         null_treatment="A Ticket with an unusable Created date is excluded and counted, never aged from zero.",
         exclusions_text=(
             "Created is missing or not a date",
-            "Created falls after the as-of date (a negative age is reported, not clipped to zero)",
+            "Created falls after the as-of date: such a Ticket is left out and reported, never aged as zero",
         ),
         lineage=f"One value per {population.removeprefix('currently ')} Ticket, from its Created cell and the as-of date.",
         measured_on="Created to the analytical as-of date",
@@ -209,7 +214,7 @@ REGISTRY: tuple[Metric, ...] = (
     Metric(
         id="candidate_ticket_count",
         label="Candidate Tickets",
-        definition="Distinct Tickets taking part in at least one Candidate from the selected matching rules; records are unioned before counting.",
+        definition="Distinct Tickets taking part in at least one Candidate from the selected matching rules; Tickets are unioned before counting.",
         unit="tickets",
         grain="Ticket",
         aggregation="rule",
@@ -346,7 +351,7 @@ REGISTRY: tuple[Metric, ...] = (
         grain="Ticket",
         aggregation="sum",
         null_treatment=(
-            "Labour on a Ticket with no usable Rate or hours is unpriced and disclosed, never valued at zero; "
+            "Claimed labour on a Ticket with no usable Rate or hours is unpriced and disclosed, never valued at zero; "
             "its Job Work Pay still counts. A Ticket with no known component is left out and reported."
         ),
         exclusions_text=("Tickets with neither priceable labour nor a usable Job Work Pay",),
@@ -365,9 +370,9 @@ REGISTRY: tuple[Metric, ...] = (
         partials=(
             Partial(
                 "unpriced_labour",
-                f"NOT {LABOUR_KNOWN_SQL} AND COALESCE({CLAIMED_HOURS_SQL}, 1) > 0",
+                f"NOT {LABOUR_KNOWN_SQL}",
                 "labour is unpriced because Rate or an hour component is missing or invalid",
-                quantity=f"COALESCE({CLAIMED_HOURS_SQL}, 0)",
+                quantity=USABLE_HOURS_SQL,
                 quantity_unit="hours",
             ),
         ),

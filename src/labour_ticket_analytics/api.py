@@ -31,14 +31,9 @@ AS_OF_CHANGED_NOTE = (
 )
 
 # The header tiles, in display order. Each is a registry metric, never a constant.
-TILES = (
-    ("ticket_count", "Source records"),
-    ("marked_ticket_count", "Recorded Markers"),
-    ("pending_count", "Pending"),
-    ("approved_not_keyed_count", "Approved, not Keyed"),
-)
+TILES = ("ticket_count", "marked_ticket_count", "pending_count", "approved_not_keyed_count")
 TILES_OVERLAP_NOTE = (
-    "These tiles overlap conceptually and do not sum to the source records: each counts Tickets "
+    "These tiles overlap conceptually and do not sum to the Tickets in the Snapshot: each counts Tickets "
     "from the same population, and one Ticket can fall under more than one tile."
 )
 
@@ -217,19 +212,19 @@ def create_app(state: AppState) -> FastAPI:
     def tiles(query: dict = Depends(filter_query)) -> dict:
         fingerprint = state.active_fingerprint
         filters = active_filters(fingerprint, query)
-        results = [(label, evaluate(fingerprint, metric_id, filters)) for metric_id, label in TILES]
+        results = [evaluate(fingerprint, metric_id, filters) for metric_id in TILES]
         return {
             "tiles": [
                 {
                     "metric_id": result["metric"]["id"],
-                    "label": label,
+                    "label": result["metric"]["label"],
                     "value": result["value"],
                     "unit": result["metric"]["unit"],
                     "definition": result["metric"]["definition"],
                     "percentage": result["percentage"],
                     "warnings": result["warnings"],
                 }
-                for label, result in results
+                for result in results
             ],
             "note": TILES_OVERLAP_NOTE,
             "grain": "Ticket",

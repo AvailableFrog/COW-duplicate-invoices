@@ -18,7 +18,7 @@ export function HeaderTiles({ data }: { data: TilesResponse }) {
             {tile.percentage && tile.percentage.ratio !== null ? (
               <span className="muted tile-share num">
                 {percentFormat.format(tile.percentage.ratio)} ({numberFormat.format(tile.percentage.numerator)} of{" "}
-                {numberFormat.format(tile.percentage.denominator)} records)
+                {numberFormat.format(tile.percentage.denominator)} Tickets)
               </span>
             ) : null}
             <details>

@@ -15,7 +15,7 @@ from typing import Any
 
 from labour_ticket_analytics.validation import APPROVAL_STATUSES
 
-# Date basis ID (the source column) -> (normalized column, label, required source column).
+# Date basis ID (the source column) -> (normalized column, label).
 DATE_BASES: dict[str, tuple[str, str]] = {
     "Created": ("created", "Created"),
     "Date": ("work_date", "Date as recorded"),

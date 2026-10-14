@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { AsOf, HeaderResponse } from "./api";
 
@@ -90,6 +90,9 @@ function AsOfControl({ asOf, onChange }: { asOf: AsOf; onChange: (date: string) 
   const [draft, setDraft] = useState(asOf.date);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Follow the date in effect when it changes elsewhere, such as after a reimport.
+  useEffect(() => setDraft(asOf.date), [asOf.date]);
 
   async function apply(date: string) {
     setSaving(true);
