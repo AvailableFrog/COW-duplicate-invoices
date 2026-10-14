@@ -11,6 +11,7 @@ import {
   type TimeComparison,
   type TimeParse,
 } from "./api";
+import { ReviewPanel } from "./ReviewPanel";
 
 /** What the drawer was opened on: a member Ticket, never the possible duplicate's display name. */
 export interface DrawerTarget {
@@ -23,6 +24,8 @@ interface EvidenceDrawerProps {
   target: DrawerTarget | null;
   filters: FilterState;
   onClose: () => void;
+  /** Called after a Review Outcome or link is saved, so the list can show it. */
+  onReviewChange: () => void;
 }
 
 // Each settled state remembers its target, so a newly opened drawer never shows the previous one's evidence.
@@ -212,7 +215,7 @@ function TimeParseCard({ member, parse }: { member: EvidenceMember; parse: TimeP
   );
 }
 
-function Evidence({ data }: { data: EvidenceResponse }) {
+function Evidence({ data, onReviewChange }: { data: EvidenceResponse; onReviewChange: () => void }) {
   const [showWhitespace, setShowWhitespace] = useState(false);
   const differing = data.differing_fields.length;
   return (
@@ -239,6 +242,13 @@ function Evidence({ data }: { data: EvidenceResponse }) {
           .
         </p>
       </section>
+
+      <ReviewPanel
+        fingerprint={data.snapshot_fingerprint}
+        members={data.members}
+        review={data.review}
+        onChanged={onReviewChange}
+      />
 
       {data.annotations.map((annotation) => (
         <AnnotationPanel key={annotation.letter} annotation={annotation} />
@@ -368,9 +378,11 @@ function Evidence({ data }: { data: EvidenceResponse }) {
 }
 
 /** The wide evidence drawer for one possible duplicate: a modal dialog closed by its button or Escape. */
-export function EvidenceDrawer({ target, filters, onClose }: EvidenceDrawerProps) {
+export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: EvidenceDrawerProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [settled, setState] = useState<LoadState>({ kind: "loading" });
+  // Bumped after a review save: the evidence is fetched again in place, keeping the drawer open.
+  const [reviewGeneration, setReviewGeneration] = useState(0);
   const state: LoadState = settled.kind !== "loading" && settled.target === target ? settled : { kind: "loading" };
 
   useEffect(() => {
@@ -390,7 +402,12 @@ export function EvidenceDrawer({ target, filters, onClose }: EvidenceDrawerProps
         setState({ kind: "failed", target, message: error instanceof Error ? error.message : String(error) });
       });
     return () => controller.abort();
-  }, [target, filters]);
+  }, [target, filters, reviewGeneration]);
+
+  function reviewChanged() {
+    setReviewGeneration((value) => value + 1);
+    onReviewChange();
+  }
 
   const first = state.kind === "ready" ? state.data.members[0] : null;
   return (
@@ -422,7 +439,7 @@ export function EvidenceDrawer({ target, filters, onClose }: EvidenceDrawerProps
                 again; if it still fails, reload the page.
               </p>
             ) : null}
-            {state.kind === "ready" ? <Evidence data={state.data} /> : null}
+            {state.kind === "ready" ? <Evidence data={state.data} onReviewChange={reviewChanged} /> : null}
           </div>
         </>
       ) : null}

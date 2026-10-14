@@ -62,6 +62,10 @@ _Avoid_: confirmed repeat, proven duplicate, double payment
 A Review Outcome stating that one Ticket corrects or supersedes another, with the kept and replaced Tickets linked.
 _Avoid_: correction, resubmission, superseded claim
 
+**Replacement Link**:
+A reviewer's link from one replaced Ticket to one Ticket kept in its place; a replaced Ticket may have several kept Tickets, so no single survivor is forced. Only these links can take a Ticket out of an adjusted figure; a Review Outcome or note alone never does.
+_Avoid_: survivor, original, winner, exclusion
+
 **Alias**:
 A reviewer-confirmed statement that two employee labels name one person, such as "Mario Collymore" and "Mariocollymore". Until confirmed it is only a suggestion.
 _Avoid_: merge, same person, fuzzy match, identity match

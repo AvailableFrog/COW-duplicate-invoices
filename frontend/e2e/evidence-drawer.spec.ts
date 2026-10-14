@@ -1,19 +1,8 @@
 import { join } from "node:path";
 
-import type { Locator, Page } from "@playwright/test";
-
-import { boot, expect, test, writeWorkbook } from "./app";
+import { boot, expect, tabTo, test, writeWorkbook } from "./app";
 
 const PETER = "Possible duplicate L225526+L225761";
-
-/** Press Tab until the named control has focus, proving it is reachable by keyboard alone. */
-async function tabTo(page: Page, target: Locator, limit = 150): Promise<void> {
-  for (let presses = 0; presses < limit; presses += 1) {
-    await page.keyboard.press("Tab");
-    if (await target.evaluate((element) => element === document.activeElement)) return;
-  }
-  throw new Error(`not reached by keyboard within ${limit} Tab presses`);
-}
 
 test("the Peter Holder possible duplicate opens from the list by keyboard and its drawer reads end to end", async ({
   page,

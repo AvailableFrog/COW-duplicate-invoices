@@ -711,3 +711,240 @@ summary:focus-visible {
 .timeline-table .cell-text {
   white-space: pre;
 }
+
+/* Local review controls in the drawer: an outcome per ticket pair, kept/replaced links and history. */
+.review-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 16px 16px;
+}
+
+.review-panel input[type="text"],
+.review-panel textarea,
+.review-panel select {
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.review-panel input:focus-visible,
+.review-panel textarea:focus-visible,
+.review-panel select:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.reviewer-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 8px 0 4px;
+}
+
+.reviewer-field label {
+  font-weight: 600;
+}
+
+.reviewer-field input {
+  width: 16rem;
+}
+
+.reviewer-field .muted {
+  font-size: 0.85rem;
+}
+
+.pair-outcome,
+.replacement-links,
+.review-history {
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 4px;
+}
+
+.pair-current {
+  font-size: 0.95rem;
+}
+
+.outcome-choices,
+.link-form fieldset {
+  border: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.outcome-choices legend,
+.link-form legend {
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.outcome-choices {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+@media (max-width: 800px) {
+  .outcome-choices {
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  }
+}
+
+.outcome-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.outcome-choice:has(input:checked) {
+  border-color: var(--accent);
+  background: #eef7f7;
+}
+
+.outcome-choice input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+
+.outcome-choice input:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.outcome-label {
+  display: block;
+  font-weight: 600;
+}
+
+.outcome-definition {
+  display: block;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.review-fields {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 8px 16px;
+  margin: 8px 0;
+}
+
+.review-fields label,
+.link-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.review-fields textarea {
+  resize: vertical;
+  min-height: 2.6rem;
+}
+
+@media (max-width: 1100px) {
+  .review-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .review-fields label:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.form-actions button[type="submit"] {
+  font: inherit;
+  font-weight: 600;
+  padding: 5px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.form-actions button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.form-status {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.link-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.link-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.link-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 24px;
+  margin-top: 8px;
+}
+
+.link-form fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.link-form .form-actions {
+  flex-basis: 100%;
+}
+
+.kept-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kept-choice input {
+  accent-color: var(--accent);
+}
+
+.history-table td {
+  min-width: 7rem;
+}
+
+.priority-review {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent);
+}
