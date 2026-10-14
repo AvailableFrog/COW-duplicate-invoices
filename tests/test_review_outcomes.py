@@ -220,11 +220,14 @@ def test_a_replaced_ticket_can_be_linked_to_two_kept_tickets_and_both_links_are_
         (4, "L000003", 3, "L000002", "Alex", "Covers both"),
     ]
     shown = [
-        (l["replaced_row"], l["replaced_ticket_number"], l["retained_row"], l["retained_ticket_number"], l["reviewer"], l["rationale"])
-        for l in review["links"]
+        (
+            link["replaced_row"], link["replaced_ticket_number"], link["retained_row"],
+            link["retained_ticket_number"], link["reviewer"], link["rationale"],
+        )
+        for link in review["links"]
     ]
     assert shown == expected
-    assert [(l["replaced_row"], l["retained_row"]) for l in summary["links"]] == [(4, 2), (4, 3)]
+    assert [(link["replaced_row"], link["retained_row"]) for link in summary["links"]] == [(4, 2), (4, 3)]
     assert summary["replaced_tickets"] == [4]
     # Each link made is a history row; a repeated link adds none.
     assert [(e["kind"], e["excel_rows"], e["previous"], e["new"]["retained_row"]) for e in review["history"]] == [
@@ -240,6 +243,10 @@ def test_a_link_can_be_removed_with_a_history_row_and_contradictory_or_unrelated
         fingerprint = booted.get("/api/snapshot").json()["snapshot_fingerprint"]
         booted.client.put(link_path(fingerprint, 4, 2), json={"reviewer": "Alex"})
         reverse = booted.client.put(link_path(fingerprint, 2, 4), json={"reviewer": "Alex"})
+        # A chain is fine (4 replaced by 2, 2 replaced by 3); closing it into a loop would leave no ticket kept.
+        chain = booted.client.put(link_path(fingerprint, 2, 3), json={"reviewer": "Alex"})
+        loop = booted.client.put(link_path(fingerprint, 3, 4), json={"reviewer": "Alex"})
+        booted.client.request("DELETE", link_path(fingerprint, 2, 3), json={"reviewer": "Alex"})
         itself = booted.client.put(link_path(fingerprint, 4, 4), json={"reviewer": "Alex"})
         outside = booted.client.put(link_path(fingerprint, 4, 9), json={"reviewer": "Alex"})
         removed = booted.client.request("DELETE", link_path(fingerprint, 4, 2), json={"reviewer": "Sam", "rationale": "Wrong way round"})
@@ -247,6 +254,9 @@ def test_a_link_can_be_removed_with_a_history_row_and_contradictory_or_unrelated
         review = evidence(booted, 2, fingerprint)["review"]
 
     assert reverse.status_code == 409
+    assert reverse.json()["detail"]["code"] == "link_loop"
+    assert chain.status_code == 200
+    assert loop.status_code == 409
     assert itself.status_code == 422
     assert outside.status_code == 404
     assert removed.status_code == 200

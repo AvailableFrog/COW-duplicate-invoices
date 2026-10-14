@@ -265,11 +265,12 @@ function ReplacementLinks({ fingerprint, members, links, label, requireReviewer,
     try {
       setStatus({ kind: "saved", text: await action() });
       setRationale("");
-      onChanged();
     } catch (error: unknown) {
       setStatus({ kind: "error", text: `Not saved: ${message(error)}.` });
     } finally {
       setBusy(false);
+      // Refresh even after a failure: an earlier link in the same batch may already be saved.
+      onChanged();
     }
   }
 

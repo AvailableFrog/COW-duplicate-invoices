@@ -21,7 +21,7 @@ from pathlib import Path
 import uvicorn
 
 from labour_ticket_analytics.api import DEFAULT_AS_OF, AppState, create_app
-from labour_ticket_analytics.review import ReviewStore, ReviewStoreInUse
+from labour_ticket_analytics.review import ReviewStore, ReviewStoreUnavailable
 from labour_ticket_analytics.store import SnapshotStore
 from labour_ticket_analytics.workbook import WorkbookError, import_workbook
 
@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         store.add_snapshot(snapshot)
         elapsed = time.perf_counter() - started
         review = ReviewStore.in_data_dir(args.data_dir)
-    except (LaunchError, WorkbookError, ReviewStoreInUse) as error:
+    except (LaunchError, WorkbookError, ReviewStoreUnavailable) as error:
         print(f"error: {error}", file=sys.stderr, flush=True)
         return 2
     print(

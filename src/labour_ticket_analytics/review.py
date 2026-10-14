@@ -23,6 +23,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -121,8 +123,8 @@ class ReviewError(ValueError):
         return {"code": self.code, "field": self.field, "message": str(self)}
 
 
-class ReviewStoreInUse(RuntimeError):
-    """The review file is held by another running copy of the application."""
+class ReviewStoreUnavailable(RuntimeError):
+    """The review file cannot be used: another running copy holds it, or it has another schema version."""
 
 
 def pair_key(first_row: int, second_row: int) -> tuple[int, int]:
@@ -166,7 +168,7 @@ class ReviewStore:
         try:
             self.connection = duckdb.connect(database=str(path))
         except duckdb.IOException as error:
-            raise ReviewStoreInUse(
+            raise ReviewStoreUnavailable(
                 f"the review store {path} could not be opened ({error}); "
                 "if another copy of the application is running with the same --data-dir, stop it first"
             ) from error
@@ -176,7 +178,7 @@ class ReviewStore:
         if row[0] is None:
             self.connection.execute("INSERT INTO review_store VALUES (?)", [SCHEMA_VERSION])
         elif row[0] != SCHEMA_VERSION:
-            raise ReviewStoreInUse(f"the review store {path} has schema version {row[0]}, expected {SCHEMA_VERSION}")
+            raise ReviewStoreUnavailable(f"the review store {path} has schema version {row[0]}, expected {SCHEMA_VERSION}")
 
     @classmethod
     def in_data_dir(cls, data_dir: Path) -> ReviewStore:
@@ -186,6 +188,17 @@ class ReviewStore:
     def close(self) -> None:
         with self._lock:
             self.connection.close()
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """One atomic change: a value and its history row are saved together or not at all."""
+        self.connection.execute("BEGIN TRANSACTION")
+        try:
+            yield
+        except BaseException:
+            self.connection.execute("ROLLBACK")
+            raise
+        self.connection.execute("COMMIT")
 
     # Outcomes
 
@@ -268,8 +281,7 @@ class ReviewStore:
                 )
             if changed:
                 recorded_at = _now()
-                self.connection.execute("BEGIN TRANSACTION")
-                try:
+                with self._transaction():
                     self.connection.execute(
                         "INSERT OR REPLACE INTO review_outcomes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         [fingerprint, first, second, *numbers, outcome, note, reference, reviewer, recorded_at],
@@ -278,22 +290,14 @@ class ReviewStore:
                         fingerprint, "outcome", [first, second], numbers, reviewer, recorded_at,
                         previous_value, new_value, rationale,
                     )
-                except BaseException:
-                    self.connection.execute("ROLLBACK")
-                    raise
-                self.connection.execute("COMMIT")
             record = self._outcomes(fingerprint, [(first, second)])[(first, second)]
             history = self._history(fingerprint, kind="outcome", excel_rows=[first, second])
         return {**record, "history": history, "changed": changed}
 
     # Replacement links
 
-    def links(self, fingerprint: str, excel_rows: Iterable[int] | None = None) -> list[dict[str, Any]]:
-        """Links with either Ticket among excel_rows (all of the Snapshot's when None), oldest first."""
-        with self._lock:
-            return self._links(fingerprint, excel_rows)
-
     def _links(self, fingerprint: str, excel_rows: Iterable[int] | None = None) -> list[dict[str, Any]]:
+        """Links with either Ticket among excel_rows (all of the Snapshot's when None), oldest first."""
         rows = self.connection.execute(
             "SELECT replaced_row, retained_row, replaced_ticket_number, retained_ticket_number, reviewer, recorded_at,"
             " rationale FROM replacement_links WHERE snapshot_fingerprint = ? ORDER BY recorded_at, replaced_row, retained_row",
@@ -314,6 +318,15 @@ class ReviewStore:
             if wanted is None or row[0] in wanted or row[1] in wanted
         ]
 
+    def _link(self, fingerprint: str, replaced_row: int, retained_row: int) -> dict[str, Any] | None:
+        return next(
+            (
+                link for link in self._links(fingerprint)
+                if (link["replaced_row"], link["retained_row"]) == (replaced_row, retained_row)
+            ),
+            None,
+        )
+
     def link(
         self,
         fingerprint: str,
@@ -324,7 +337,12 @@ class ReviewStore:
         reviewer: str,
         rationale: str,
     ) -> dict[str, Any]:
-        """Record that one Ticket was replaced and another kept. An existing link is left as it is."""
+        """Record that one Ticket was replaced and another kept. An existing link is left as it is.
+
+        A link that would close a loop (the kept Ticket already leads back to
+        the replaced one through other links) is refused, because a loop
+        would leave no Ticket kept.
+        """
         if replaced_row == retained_row:
             raise ReviewError("same_ticket", "retained_row", "a ticket cannot replace itself")
         reviewer = clean_text("reviewer", reviewer, required=True)
@@ -332,35 +350,27 @@ class ReviewStore:
         numbers = [ticket_numbers.get(replaced_row), ticket_numbers.get(retained_row)]
         with self._lock:
             existing = {(link["replaced_row"], link["retained_row"]) for link in self._links(fingerprint)}
-            if (retained_row, replaced_row) in existing:
+            if _leads_to(existing, retained_row, replaced_row):
                 raise ReviewError(
-                    "reverse_link_exists",
+                    "link_loop",
                     "replaced_row",
-                    f"row {retained_row} is already recorded as replaced by row {replaced_row}; remove that link first",
+                    f"row {retained_row} is already recorded as replaced, directly or through other links, in favour of "
+                    f"row {replaced_row}; this link would leave no ticket kept, so remove the other link first",
                     status=409,
                 )
             changed = (replaced_row, retained_row) not in existing
             if changed:
                 recorded_at = _now()
-                value = _link_value(replaced_row, retained_row, numbers)
-                self.connection.execute("BEGIN TRANSACTION")
-                try:
+                with self._transaction():
                     self.connection.execute(
                         "INSERT INTO replacement_links VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         [fingerprint, replaced_row, retained_row, *numbers, reviewer, recorded_at, rationale],
                     )
                     self._append_history(
                         fingerprint, "link", [replaced_row, retained_row], numbers, reviewer, recorded_at,
-                        None, value, rationale,
+                        None, _link_value(replaced_row, retained_row, numbers), rationale,
                     )
-                except BaseException:
-                    self.connection.execute("ROLLBACK")
-                    raise
-                self.connection.execute("COMMIT")
-            link = next(
-                link for link in self._links(fingerprint)
-                if (link["replaced_row"], link["retained_row"]) == (replaced_row, retained_row)
-            )
+            link = self._link(fingerprint, replaced_row, retained_row)
         return {**link, "changed": changed}
 
     def unlink(self, fingerprint: str, replaced_row: int, retained_row: int, *, reviewer: str, rationale: str) -> dict[str, Any]:
@@ -368,20 +378,13 @@ class ReviewStore:
         reviewer = clean_text("reviewer", reviewer, required=True)
         rationale = clean_text("rationale", rationale)
         with self._lock:
-            link = next(
-                (
-                    link for link in self._links(fingerprint)
-                    if (link["replaced_row"], link["retained_row"]) == (replaced_row, retained_row)
-                ),
-                None,
-            )
+            link = self._link(fingerprint, replaced_row, retained_row)
             if link is None:
                 raise ReviewError(
                     "no_link", "replaced_row", f"no link records row {replaced_row} as replaced by row {retained_row}", status=404
                 )
             numbers = [link["replaced_ticket_number"], link["retained_ticket_number"]]
-            self.connection.execute("BEGIN TRANSACTION")
-            try:
+            with self._transaction():
                 self.connection.execute(
                     "DELETE FROM replacement_links WHERE snapshot_fingerprint = ? AND replaced_row = ? AND retained_row = ?",
                     [fingerprint, replaced_row, retained_row],
@@ -390,24 +393,12 @@ class ReviewStore:
                     fingerprint, "link", [replaced_row, retained_row], numbers, reviewer, _now(),
                     _link_value(replaced_row, retained_row, numbers), None, rationale,
                 )
-            except BaseException:
-                self.connection.execute("ROLLBACK")
-                raise
-            self.connection.execute("COMMIT")
         return {**link, "removed": True}
 
     # History
 
-    def history(self, fingerprint: str, excel_rows: Iterable[int] | None = None) -> list[dict[str, Any]]:
-        """History rows touching any of excel_rows (all of the Snapshot's when None), newest first."""
-        with self._lock:
-            entries = self._history(fingerprint)
-        if excel_rows is None:
-            return entries
-        wanted = set(excel_rows)
-        return [entry for entry in entries if wanted & set(entry["excel_rows"])]
-
     def _history(self, fingerprint: str, kind: str | None = None, excel_rows: list[int] | None = None) -> list[dict[str, Any]]:
+        """History rows, newest first: the Snapshot's, or one subject's when kind and excel_rows are given."""
         query = (
             "SELECT entry, kind, excel_rows, ticket_numbers, reviewer, recorded_at, previous_value, new_value, rationale"
             " FROM review_history WHERE snapshot_fingerprint = ?"
@@ -512,6 +503,19 @@ def _unsaved(first_row: int, second_row: int, ticket_numbers: list[str | None]) 
         "recorded_at": None,
         "saved": False,
     }
+
+
+def _leads_to(links: set[tuple[int, int]], start: int, target: int) -> bool:
+    """Whether following replaced -> kept links from start reaches target (start itself counts)."""
+    seen, frontier = set(), [start]
+    while frontier:
+        row = frontier.pop()
+        if row == target:
+            return True
+        if row not in seen:
+            seen.add(row)
+            frontier.extend(retained for replaced, retained in links if replaced == row)
+    return False
 
 
 def _link_value(replaced_row: int, retained_row: int, numbers: list[str | None]) -> dict[str, Any]:

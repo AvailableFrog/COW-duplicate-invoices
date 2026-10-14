@@ -269,9 +269,10 @@ def create_app(state: AppState) -> FastAPI:
     def review_priorities(query: dict = Depends(filter_query)) -> dict:
         fingerprint = state.active_fingerprint
         filters = active_filters(fingerprint, query)
+        saved = state.review.outcomes(fingerprint)
         return {
             "possible_duplicates": [
-                with_outcomes(fingerprint, item) for item in state.store.possible_duplicates(fingerprint, filters)
+                with_outcomes(fingerprint, item, saved) for item in state.store.possible_duplicates(fingerprint, filters)
             ],
             "tiers": [tier.payload() for tier in TIERS],
             "rules": [rule.payload() for rule in RULES.values()],
@@ -388,7 +389,6 @@ def create_app(state: AppState) -> FastAPI:
 
     def linkable(fingerprint: str, replaced_row: int, retained_row: int) -> None:
         """Both Tickets must sit in one possible duplicate, so every link is made from the evidence."""
-        require_snapshot(fingerprint)
         for row in (replaced_row, retained_row):
             if state.store.ticket(fingerprint, row) is None:
                 raise no_ticket(fingerprint, row)
@@ -405,6 +405,7 @@ def create_app(state: AppState) -> FastAPI:
     @app.put("/api/snapshots/{fingerprint}/replacement-links/{replaced_row}/{retained_row}")
     def make_link(fingerprint: str, replaced_row: int, retained_row: int, change: LinkChange, request: Request) -> dict:
         require_same_origin(request)
+        require_snapshot(fingerprint)
         if replaced_row != retained_row:
             linkable(fingerprint, replaced_row, retained_row)
         numbers = state.store.ticket_numbers(fingerprint, (replaced_row, retained_row))
