@@ -28,6 +28,22 @@ _Avoid_: duplicate, match, hit, flag
 The connected set of Candidates within one employee-and-date context. The unit a reviewer opens; membership does not mean every member repeats every other.
 _Avoid_: group, pair, cluster, incident
 
+**Confident Interval**:
+A work period parsed from a Ticket's Time text with no assumption needed: explicit AM/PM or 24-hour form. Only Confident Intervals can establish overlap or separation.
+_Avoid_: parsed time, valid time
+
+**Ambiguous Interval**:
+A work period whose Time text lacks a meridiem or is otherwise open to more than one reading. It carries a displayed Plausible Reading but can never prove overlap or separation.
+_Avoid_: bad time, unparsed time, invalid time
+
+**Plausible Reading**:
+The single documented working-day interpretation shown for an Ambiguous Interval: a start between 5:00 and 11:59 is taken as AM, and an end numerically below the start as PM. Always labelled as assumed.
+_Avoid_: corrected time, fixed time, inferred time
+
+**Annotation**:
+A note attached to a Ticket by ticket number from the evidence report: its example letter, the consultant's review note, and the question for Oliver. Annotations are displayed on evidence and never used by matching rules.
+_Avoid_: example, hardcoded case
+
 ### Review
 
 **Review Outcome**:

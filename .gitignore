@@ -1,0 +1,13 @@
+# Locally imported workbooks and local review databases stay out of git.
+# The one committed source workbook lives under data/ (see docs/adr/0003).
+*.xlsx
+!data/Labour Tickets Export.xlsx
+*.duckdb
+*.duckdb.wal
+.scratch/
+
+# Python / Node
+__pycache__/
+.venv/
+node_modules/
+dist/

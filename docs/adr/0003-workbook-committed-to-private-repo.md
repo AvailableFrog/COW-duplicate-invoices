@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # The real workbook is committed to this private repository
