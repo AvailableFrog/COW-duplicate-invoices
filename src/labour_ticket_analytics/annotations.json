@@ -1,0 +1,348 @@
+{
+  "source": "docs/source/labour-ticket-report-readable.md",
+  "description": "Annotations for the 29 example Tickets of the evidence report, keyed by ticket number. Each ticket names its A-N example; each example carries the condensed review note (the requester's first-person paraphrase, null where the report gives none) and its pattern's questions for Oliver. Notes are quoted from the report except where review_note_reworded is true: those were reworded so no screen shows a phrase the display language bans, and source_section names where the original wording stays. Shown on evidence only; no matching rule reads this file.",
+  "tickets": {
+    "L224030": {
+      "example": "F",
+      "report_excel_row": 2351
+    },
+    "L224175": {
+      "example": "F",
+      "report_excel_row": 2206
+    },
+    "L224193": {
+      "example": "K",
+      "report_excel_row": 2188
+    },
+    "L224194": {
+      "example": "K",
+      "report_excel_row": 2187
+    },
+    "L224229": {
+      "example": "L",
+      "report_excel_row": 2152
+    },
+    "L224230": {
+      "example": "L",
+      "report_excel_row": 2151
+    },
+    "L224232": {
+      "example": "M",
+      "report_excel_row": 2149
+    },
+    "L224513": {
+      "example": "D",
+      "report_excel_row": 1868
+    },
+    "L224653": {
+      "example": "N",
+      "report_excel_row": 1728
+    },
+    "L224654": {
+      "example": "N",
+      "report_excel_row": 1727
+    },
+    "L224725": {
+      "example": "E",
+      "report_excel_row": 1656
+    },
+    "L224806": {
+      "example": "M",
+      "report_excel_row": 1575
+    },
+    "L224836": {
+      "example": "I",
+      "report_excel_row": 1545
+    },
+    "L225072": {
+      "example": "E",
+      "report_excel_row": 1309
+    },
+    "L225309": {
+      "example": "H",
+      "report_excel_row": 1072
+    },
+    "L225382": {
+      "example": "I",
+      "report_excel_row": 999
+    },
+    "L225407": {
+      "example": "D",
+      "report_excel_row": 974
+    },
+    "L225526": {
+      "example": "C",
+      "report_excel_row": 855
+    },
+    "L225552": {
+      "example": "H",
+      "report_excel_row": 829
+    },
+    "L225761": {
+      "example": "C",
+      "report_excel_row": 620
+    },
+    "L225788": {
+      "example": "A",
+      "report_excel_row": 593
+    },
+    "L225790": {
+      "example": "A",
+      "report_excel_row": 591
+    },
+    "L226063": {
+      "example": "I",
+      "report_excel_row": 318
+    },
+    "L226276": {
+      "example": "J",
+      "report_excel_row": 105
+    },
+    "L226278": {
+      "example": "G",
+      "report_excel_row": 103
+    },
+    "L226299": {
+      "example": "G",
+      "report_excel_row": 82
+    },
+    "L226302": {
+      "example": "B",
+      "report_excel_row": 79
+    },
+    "L226320": {
+      "example": "J",
+      "report_excel_row": 61
+    },
+    "L226348": {
+      "example": "B",
+      "report_excel_row": 33
+    }
+  },
+  "examples": {
+    "A": {
+      "title": "Romarian Alleyne: different jobs",
+      "pattern": {
+        "number": 4,
+        "title": "Equal duration, separate work periods"
+      },
+      "summary": "Separate morning/afternoon periods and different job identifiers. The job identifiers may distinguish these without any time parsing.",
+      "review_note": "This does not show a company false positive. My concern was separate periods that otherwise look like the same job, so we need the real automated and human rules.",
+      "questions_for_oliver": [
+        "Using B’s two visits to the same job, show how the current check distinguishes separate periods from repeated work. Does it use time, or does a person decide?",
+        "What is the intended unit of submission: one employee-day, one job or one period? How should split work be recorded while preserving job allocations?"
+      ],
+      "what_the_answer_changes": "Whether the fix is time parsing, a clearer daily form, or both.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 4: Equal duration, separate work periods > A. Romarian Alleyne: different jobs"
+    },
+    "B": {
+      "title": "Patrick Gittens: same job, separate visits",
+      "pattern": {
+        "number": 4,
+        "title": "Equal duration, separate work periods"
+      },
+      "summary": "Lears, job 20105, on 7 October; two one-hour periods. Both Approved with nonzero jobs, but not Keyed. This is closer to the original concern than A.",
+      "review_note": "Both seem to have been accepted. Was that because someone checked the times? Also, what does Keyed False mean after approval?",
+      "questions_for_oliver": [
+        "Using B’s two visits to the same job, show how the current check distinguishes separate periods from repeated work. Does it use time, or does a person decide?",
+        "What is the intended unit of submission: one employee-day, one job or one period? How should split work be recorded while preserving job allocations?"
+      ],
+      "what_the_answer_changes": "Whether the fix is time parsing, a clearer daily form, or both.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 4: Equal duration, separate work periods > B. Patrick Gittens: same job, separate visits"
+    },
+    "C": {
+      "title": "Peter Holder: priority example",
+      "pattern": {
+        "number": 1,
+        "title": "The same claim appears twice"
+      },
+      "summary": "Same work on 28 September. Only the ticket number, ID and creation/modification/approval timestamps differ. Both are Approved and Keyed with job 41215.",
+      "review_note": "This looks like the strongest example of a repeat claim that was not flagged; whether both tickets were paid cannot be shown from this export. Keep it as the lead example, but ask Oliver whether it was handled somewhere we cannot see.",
+      "questions_for_oliver": [
+        "Were these caught or missed? If caught, where is that decision recorded when both retain nonzero job numbers?",
+        "For Peter’s pair, show which ticket was retained and trace both through accounting and payment. Were both paid, or was one excluded elsewhere?"
+      ],
+      "what_the_answer_changes": "Whether the gap is detection, recording the review decision, or preventing a second payment.",
+      "review_note_reworded": true,
+      "source_section": "Pattern 1: The same claim appears twice > C. Peter Holder: priority example"
+    },
+    "D": {
+      "title": "Latoya Small",
+      "pattern": {
+        "number": 1,
+        "title": "The same claim appears twice"
+      },
+      "summary": "Matching work fields on 18 September; both Approved and Keyed with nonzero jobs.",
+      "review_note": "The same concern as Peter: a possible repeat claim that was not flagged. Was it overlooked, or dealt with outside the export? Whether both were paid cannot be shown from this export.",
+      "questions_for_oliver": [
+        "Were these caught or missed? If caught, where is that decision recorded when both retain nonzero job numbers?",
+        "For Peter’s pair, show which ticket was retained and trace both through accounting and payment. Were both paid, or was one excluded elsewhere?"
+      ],
+      "what_the_answer_changes": "Whether the gap is detection, recording the review decision, or preventing a second payment.",
+      "review_note_reworded": true,
+      "source_section": "Pattern 1: The same claim appears twice > D. Latoya Small"
+    },
+    "E": {
+      "title": "Samantha Drakes",
+      "pattern": {
+        "number": 1,
+        "title": "The same claim appears twice"
+      },
+      "summary": "Another matching Approved/Keyed pair for 18 September. Useful corroborating example.",
+      "review_note": null,
+      "questions_for_oliver": [
+        "Were these caught or missed? If caught, where is that decision recorded when both retain nonzero job numbers?",
+        "For Peter’s pair, show which ticket was retained and trace both through accounting and payment. Were both paid, or was one excluded elsewhere?"
+      ],
+      "what_the_answer_changes": "Whether the gap is detection, recording the review decision, or preventing a second payment.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 1: The same claim appears twice > E. Samantha Drakes"
+    },
+    "F": {
+      "title": "Mario Collymore: 10 September",
+      "pattern": {
+        "number": 1,
+        "title": "The same claim appears twice"
+      },
+      "summary": "Matching work fields and Approved/Keyed status; description punctuation differs. This is a separate case from H’s name variation on 23 September.",
+      "review_note": null,
+      "questions_for_oliver": [
+        "Were these caught or missed? If caught, where is that decision recorded when both retain nonzero job numbers?",
+        "For Peter’s pair, show which ticket was retained and trace both through accounting and payment. Were both paid, or was one excluded elsewhere?"
+      ],
+      "what_the_answer_changes": "Whether the gap is detection, recording the review decision, or preventing a second payment.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 1: The same claim appears twice > F. Mario Collymore: 10 September"
+    },
+    "G": {
+      "title": "Kerriann white: spacing in time",
+      "pattern": {
+        "number": 2,
+        "title": "The same claim looks different as text"
+      },
+      "summary": "Same job and work fields; time spacing differs. Both tickets are Pending and not Keyed.",
+      "review_note": "Show Oliver this one explicitly. Why are there two submissions with slightly different spacing? Does the red warning merely alert someone, or does it record or block anything? I cannot tell whether Pending means waiting or already caught.",
+      "questions_for_oliver": [
+        "Did the warning catch G and H despite the spacing differences, and were these tickets awaiting review or deliberately held?",
+        "What identifies the employee and work period in the actual check? Are names/times controlled fields, and does Modified By reveal a user edit, approval or automated update?"
+      ],
+      "what_the_answer_changes": "Whether to normalize inputs, fix employee identification, or record warning and review outcomes more clearly.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 2: The same claim looks different as text > G. Kerriann white: spacing in time"
+    },
+    "H": {
+      "title": "Mario Collymore: name variation",
+      "pattern": {
+        "number": 2,
+        "title": "The same claim looks different as text"
+      },
+      "summary": "Mario Collymore versus Mariocollymore for 23 September. Modified By is Tracy Whitehall versus Oliver Williams. The Pending ticket was created on 27 September, before the Approved/Keyed ticket on 29 September.",
+      "review_note": "Why did the name change, and what do the two Modified By names mean? My tentative guess was that one ticket had not been reviewed, but it could be a replacement or a held duplicate. The spelling does not establish intent.",
+      "questions_for_oliver": [
+        "Did the warning catch G and H despite the spacing differences, and were these tickets awaiting review or deliberately held?",
+        "What identifies the employee and work period in the actual check? Are names/times controlled fields, and does Modified By reveal a user edit, approval or automated update?"
+      ],
+      "what_the_answer_changes": "Whether to normalize inputs, fix employee identification, or record warning and review outcomes more clearly.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 2: The same claim looks different as text > H. Mario Collymore: name variation"
+    },
+    "I": {
+      "title": "Damar Graham: occupation and site change",
+      "pattern": {
+        "number": 3,
+        "title": "A new ticket may replace an earlier one"
+      },
+      "summary": "An Approved/Job 0 record differs from the apparent original in occupation, site and description. Rejected row 999 connects the road-preparation and plainer wording.",
+      "review_note": "Why do the occupation, site and work description vary so much if staff considered this the same claim? What does Rectro ticket mean, and which original did they identify?",
+      "questions_for_oliver": [
+        "Using J, can an employee correct, cancel or resubmit to another supervisor, and can both reviewers see the earlier claim? Why did the time and supervisor change?",
+        "Using I, what evidence linked the records despite different occupation, site and description? Is the valid ticket explicitly linked to the superseded one?"
+      ],
+      "what_the_answer_changes": "Whether the main need is overlap detection or a correction workflow that leaves only one valid claim.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 3: A new ticket may replace an earlier one > I. Damar Graham: occupation and site change"
+    },
+    "J": {
+      "title": "Orlando Richards: time and supervisor change",
+      "pattern": {
+        "number": 3,
+        "title": "A new ticket may replace an earlier one"
+      },
+      "summary": "Same job, overlapping periods and compatible descriptions; different supervisors. Both are Pending/not-Keyed, with Modified By Oliver Williams. The later ticket changes the start time.",
+      "review_note": "These cannot be separate additive shifts as written. Is this a legitimate correction or another attempt to get an outstanding claim approved? I need the workflow and the time-comparison logic before judging intent.",
+      "questions_for_oliver": [
+        "Using J, can an employee correct, cancel or resubmit to another supervisor, and can both reviewers see the earlier claim? Why did the time and supervisor change?",
+        "Using I, what evidence linked the records despite different occupation, site and description? Is the valid ticket explicitly linked to the superseded one?"
+      ],
+      "what_the_answer_changes": "Whether the main need is overlap detection or a correction workflow that leaves only one valid claim.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 3: A new ticket may replace an earlier one > J. Orlando Richards: time and supervisor change"
+    },
+    "K": {
+      "title": "Errol Thornhill: changed claim fields",
+      "pattern": {
+        "number": 3,
+        "title": "A new ticket may replace an earlier one"
+      },
+      "summary": "Same date, time and description, with changed hour fields. One record is Job 0; both are Approved and Keyed. Retained as another replacement example, without investigating pay-rate calculations.",
+      "review_note": "The marker suggests one was treated as duplicate and the other retained. The useful question is how they established that relationship when the claim fields changed.",
+      "questions_for_oliver": [
+        "Using J, can an employee correct, cancel or resubmit to another supervisor, and can both reviewers see the earlier claim? Why did the time and supervisor change?",
+        "Using I, what evidence linked the records despite different occupation, site and description? Is the valid ticket explicitly linked to the superseded one?"
+      ],
+      "what_the_answer_changes": "Whether the main need is overlap detection or a correction workflow that leaves only one valid claim.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 3: A new ticket may replace an earlier one > K. Errol Thornhill: changed claim fields"
+    },
+    "L": {
+      "title": "Weston Holder: multiple periods in one ticket",
+      "pattern": {
+        "number": 4,
+        "title": "Equal duration, separate work periods"
+      },
+      "summary": "Separate periods; both Approved/Keyed with nonzero jobs. One Time cell contains two periods separated by an underscore.",
+      "review_note": "This appears to have been accepted correctly. Low priority: can their time handling recognize both periods separated by the underscore?",
+      "questions_for_oliver": [
+        "Using B’s two visits to the same job, show how the current check distinguishes separate periods from repeated work. Does it use time, or does a person decide?",
+        "What is the intended unit of submission: one employee-day, one job or one period? How should split work be recorded while preserving job allocations?"
+      ],
+      "what_the_answer_changes": "Whether the fix is time parsing, a clearer daily form, or both.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 4: Equal duration, separate work periods > L. Weston Holder: multiple periods in one ticket"
+    },
+    "M": {
+      "title": "Weston Holder: both records marked Job 0",
+      "pattern": {
+        "number": 5,
+        "title": "A payment component may be repeated"
+      },
+      "summary": "Both carry Job Work Pay 50 and are Approved/Keyed with Job 0. The ticket containing hours was created on 15 September; the no-hours ticket followed on 21 September.",
+      "review_note": "Could one be an incomplete claim and the other a correction? Why were both marked, and where is the valid claim? My original idea that hours were added later is contradicted by the creation dates.",
+      "questions_for_oliver": [
+        "Why are both M records Job 0? Which ticket or accounting entry retained any valid payment, and could either claim have been wrongly excluded?",
+        "Do the two Job Work Pay amounts represent the same entitlement? How are those payments linked to labour claims or replacements?"
+      ],
+      "what_the_answer_changes": "Whether checks need to compare payment components and replacement links rather than reject whole tickets.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 5: A payment component may be repeated > M. Weston Holder: both records marked Job 0"
+    },
+    "N": {
+      "title": "Toyna Elcock: retrospective task claims",
+      "pattern": {
+        "number": 6,
+        "title": "The work date is buried in the description"
+      },
+      "summary": "Both Date cells say 11 September and Job Work Pay is 20, but descriptions name the 9th and the 7th. Time and labour hours are zero.",
+      "review_note": "This looks like catch-up invoicing for missed dates. How is it reviewed, and is any logic enforced? I wondered whether it needs manual handling; ask what information would allow a reliable check.",
+      "questions_for_oliver": [
+        "What does Date represent here, and how are the actual service date and any earlier claim/payment checked?",
+        "Is the check currently manual because service dates are free text, or is there structured information elsewhere?"
+      ],
+      "what_the_answer_changes": "Whether to capture service dates explicitly and check claim history; free text alone does not make this inherently unautomatable.",
+      "review_note_reworded": false,
+      "source_section": "Pattern 6: The work date is buried in the description > N. Toyna Elcock: retrospective task claims"
+    }
+  }
+}

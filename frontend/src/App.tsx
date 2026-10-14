@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   changeAsOf,
@@ -14,9 +14,10 @@ import {
   type ReviewPrioritiesResponse,
   type TilesResponse,
 } from "./api";
+import { EvidenceDrawer, type DrawerTarget } from "./EvidenceDrawer";
 import { ActiveFilters, FilterBar } from "./FilterBar";
 import { HeaderTiles } from "./HeaderTiles";
-import { ReviewPriorities } from "./ReviewPriorities";
+import { ReviewPriorities, type OpenEvidence } from "./ReviewPriorities";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
 
 type Tab = "overview" | "explore";
@@ -39,6 +40,23 @@ export function App() {
   const [prioritiesError, setPrioritiesError] = useState("");
   // Bumped whenever the Snapshot or as-of date changes, so every view refetches its numbers.
   const [generation, setGeneration] = useState(0);
+  const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
+  const drawerOpener = useRef<HTMLElement | null>(null);
+
+  const openEvidence: OpenEvidence = (item, opener) => {
+    if (!priorities) return;
+    drawerOpener.current = opener;
+    // Addressed by a member Ticket's Snapshot and Excel row; the display name is never a key (ADR 0004).
+    setDrawer({ fingerprint: priorities.snapshot_fingerprint, excelRow: item.members[0].excel_row, displayId: item.display_id });
+  };
+
+  function closeEvidence() {
+    setDrawer(null);
+    // The list may have re-rendered while the drawer was open; fall back to its heading.
+    const opener = drawerOpener.current;
+    if (opener?.isConnected) opener.focus();
+    else document.getElementById("priorities-heading")?.focus();
+  }
 
   async function applyAsOf(date: string) {
     const provenance = await changeAsOf(date);
@@ -175,7 +193,7 @@ export function App() {
                 The review priorities could not be loaded: {prioritiesError}. Change the filters or reload the page.
               </p>
             ) : priorities ? (
-              <ReviewPriorities data={priorities} />
+              <ReviewPriorities data={priorities} onOpen={openEvidence} />
             ) : (
               <p className="status">Loading the review priorities…</p>
             )}
@@ -193,6 +211,7 @@ export function App() {
           </section>
         )}
       </main>
+      <EvidenceDrawer target={drawer} filters={filters} onClose={closeEvidence} />
     </div>
   );
 }

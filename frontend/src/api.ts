@@ -170,6 +170,104 @@ export interface ReviewPrioritiesResponse extends Provenance {
   filters: FilterPayload;
 }
 
+/** One source cell exactly as imported: a blank has raw type "blank" and a null value; 0 and false stay typed. */
+export interface SourceCell {
+  raw_type: string;
+  value: string | number | boolean | null;
+  number_format: string | null;
+}
+
+export interface TimeInterval {
+  start: string;
+  end: string;
+}
+
+export interface TimePeriod {
+  text: string;
+  confidence: "confident" | "ambiguous";
+  interval: TimeInterval | null;
+  plausible_reading: (TimeInterval & { assumed: true }) | null;
+  flags: string[];
+  notes: string[];
+}
+
+export interface TimeParse {
+  raw_time: { raw_type: string; value: string | number | boolean | null };
+  parser_version: string;
+  status: string;
+  periods: TimePeriod[];
+  confident_union: TimeInterval[];
+  notes: string[];
+}
+
+export interface TimeComparison {
+  result: "overlap" | "separate" | "ambiguous" | "undetermined";
+  basis: string | null;
+  assumed: boolean;
+  intersection: TimeInterval[];
+  overlap_minutes: number;
+  explanation: string;
+}
+
+export interface EvidenceCandidate extends Candidate {
+  rule_label: string;
+  time_comparison: TimeComparison;
+}
+
+export interface EvidenceMember extends Member {
+  provenance: { snapshot_fingerprint: string; sheet: string; excel_row: number; dataframe_index: number };
+  issues: ImportIssue[];
+  time_parse: TimeParse;
+}
+
+export interface StatusBreakdown {
+  status: ApprovalStatus | null;
+  keyed: boolean | null;
+  flagged_duplicate: boolean;
+  label: string;
+  tickets: number;
+}
+
+export interface SourceFieldRow {
+  field: string;
+  position: number;
+  differs: boolean;
+  /** One per member, in member order. */
+  cells: (SourceCell & { excel_row: number })[];
+}
+
+export interface Annotation {
+  letter: string;
+  title: string;
+  pattern: { number: number; title: string };
+  summary: string;
+  /** The requester's condensed review note; null where the evidence report gives none. */
+  review_note: string | null;
+  /** True where the note was reworded so no banned phrase reaches a screen; source_section holds the original. */
+  review_note_reworded: boolean;
+  /** Where the example sits in the evidence report. */
+  source_section: string;
+  questions_for_oliver: string[];
+  what_the_answer_changes: string;
+  tickets: { ticket_number: string; excel_row: number | null; report_excel_row: number; in_possible_duplicate: boolean }[];
+}
+
+export interface EvidenceResponse extends Provenance {
+  display_id: string;
+  tier: PriorityTier;
+  exact_repeat_not_flagged: boolean;
+  rule_ids: string[];
+  pattern_labels: string[];
+  reason: string;
+  candidates: EvidenceCandidate[];
+  status_breakdown: StatusBreakdown[];
+  members: EvidenceMember[];
+  timeline: { fields: string[]; entries: { excel_row: number; ticket_number: string | null; cells: (SourceCell | null)[] }[] };
+  fields: SourceFieldRow[];
+  differing_fields: string[];
+  annotations: Annotation[];
+}
+
 async function failure(response: Response): Promise<Error> {
   let detail = `${response.status} ${response.statusText}`;
   try {
@@ -213,6 +311,19 @@ export function fetchTiles(filters: FilterState, signal?: AbortSignal): Promise<
 
 export function fetchReviewPriorities(filters: FilterState, signal?: AbortSignal): Promise<ReviewPrioritiesResponse> {
   return getJson<ReviewPrioritiesResponse>(`/api/review-priorities?${filterQuery(filters)}`, signal);
+}
+
+/** The evidence for the possible duplicate holding a Ticket, addressed by that Ticket's Snapshot and Excel row. */
+export function fetchEvidence(
+  fingerprint: string,
+  excelRow: number,
+  filters: FilterState,
+  signal?: AbortSignal,
+): Promise<EvidenceResponse> {
+  return getJson<EvidenceResponse>(
+    `/api/snapshots/${encodeURIComponent(fingerprint)}/tickets/${excelRow}/possible-duplicate?${filterQuery(filters)}`,
+    signal,
+  );
 }
 
 /** Change the analytical as-of date; later responses are computed against it. */

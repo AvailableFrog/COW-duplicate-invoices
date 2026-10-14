@@ -34,6 +34,7 @@ The header shows the Snapshot fingerprint (SHA-256 of the workbook), the sheet n
 Below it, the filter bar (date basis and range, job, status, Clear) narrows every number, and the active filters and aggregation grain are shown under it.
 The Overview opens with five tiles from the metric registry: source records, flagged duplicates, exact repeats not flagged (possible duplicates, with their ticket count shown), Pending, and Approved/not-Keyed. They overlap conceptually and do not sum to the population.
 Below the tiles, Review priorities lists every possible duplicate the matching rules found, ranked for review.
+Opening one (each name is a button, reachable by Tab and Enter) shows its evidence drawer, described under [Evidence drawer](#evidence-drawer).
 
 Options:
 
@@ -115,6 +116,22 @@ Review priorities ranks them in four tiers, then by the oldest Created among the
 This is review priority, not a probability of wrongdoing; no view ranks employees or supervisors.
 On the committed workbook the Strict repeat rule finds 34 two-ticket possible duplicates: C, D, E and F (rows 620/855, 974/1868, 1309/1656, 2206/2351) in tier 1, one Approved/Pending, one Pending/Pending and 28 with a Rejected ticket.
 
+## Evidence drawer
+
+Selecting a possible duplicate opens a wide drawer (a modal dialog; Escape or Close returns to the list) so it can be investigated without opening Excel:
+
+- **Why these tickets are together**: the reason in words, every Candidate with its rule, the two Excel rows, the fields compared, the evidence strength and how the two tickets' work periods compare, and the members' states ticket by ticket (status, Keyed, flagged duplicate), never a paid or unpaid summary.
+- **Annotations**: when a member's ticket number is one of the evidence report's 29 example Tickets, its example letter (A-N), title, pattern, the condensed review note, the questions for Oliver and the report section they come from (`docs/source/labour-ticket-report-readable.md`). A possible duplicate with no annotated ticket shows none.
+- **Claim timeline**: the members in Created order with Date, Created, Modified, Date Approved and Supervisor.
+- **Source rows, side by side**: all source columns transposed, the field-name column fixed while the ticket columns scroll, each differing field highlighted and marked "Differs". A value differs when its text (exactly as written, spaces included), number, date, true/false or blank differs; 8 and 8.0 are the same number, but 0, false, blank and the text "0" are four different values. Cells render as text, never HTML, keeping line breaks and spaces; "Show whitespace" quotes text and draws spaces (·), tabs (→) and line breaks (↵) without changing the values.
+- **Time as parsed**: each member's raw Time, parse status, each period's confidence, interval and Plausible Reading (labelled assumed), and the parser version.
+- **Where each ticket comes from**: Excel row, dataframe index, sheet and workbook fingerprint, with any import issues.
+
+Annotations live in `src/labour_ticket_analytics/annotations.json`, extracted once from the evidence report and keyed by ticket number; the report's Excel row is kept for reference only.
+They attach by ticket number, so they survive a re-export, and no matching rule reads them.
+Each example carries its pattern's numbered questions for Oliver, since the report asks its questions per pattern; E and F have no review note in the report.
+Notes are quoted verbatim except C and D, reworded (and marked `review_note_reworded`) so no screen shows "paid twice", "missed duplicate" or "fraud"; `source_section` names where the original wording stays.
+
 ## API
 
 | Request | Returns |
@@ -129,6 +146,8 @@ On the committed workbook the Strict repeat rule finds 34 two-ticket possible du
 | `GET /api/review-priorities` | the ranked possible duplicates under the filters: each with `rank`, `display_id`, `tier`, `rule_ids`, `pattern_labels`, `summary`, its `members` (Excel row, ticket number, employee, Date, Job Number, status, Keyed, `flagged_duplicate`, Created, `in_filter`) and its `candidates` (Excel rows, rule ID, fields compared, evidence strength, reason); plus the tier and rule definitions. A filter selects a possible duplicate when any member is inside it, and every member stays listed |
 | `GET /api/filters` | what the filter bar offers: date bases with their date spans, statuses and jobs with Ticket counts |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}` | one Ticket: its Excel row, dataframe index (Excel row minus 2), sheet, its import issues, and all cells with field name, position, raw type, raw value and number format. Blank cells have raw type `blank` and a null value; a numeric zero stays `0`; booleans stay `true` or `false`; dates are ISO 8601 text with raw type `datetime`; formulas have raw type `formula` and their formula text |
+| `GET /api/snapshots/{fingerprint}/tickets/{excel_row}/possible-duplicate` | the evidence for the possible duplicate holding that Ticket; any member's row gives the same answer, and the display name is never the address. `display_id`, `tier`, `pattern_labels`, `reason`, `candidates` (each with `rule_label` and `time_comparison`), `status_breakdown` (member states, never payment), `members` (with `provenance`, `issues` and `time_parse`), `timeline` (members by Created with Date, Created, Modified, Date Approved, Supervisor), `fields` (one row per source column with `differs` and each member's raw type and value), `differing_fields` and `annotations`. Takes the filter parameters to label out-of-filter members. 404 when the Ticket is in no possible duplicate |
+| `GET /api/annotations` | the evidence report's 14 examples (A-N) with title, pattern, summary, `review_note` (null where the report has none; `review_note_reworded` marks C and D), `source_section`, `questions_for_oliver` and their 29 ticket numbers, each with its Excel row in the active Snapshot |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}/time` | the Ticket's Time cell as parsed: raw type and value, parser version, status, each period with its text, confidence (`confident` or `ambiguous`), interval, Plausible Reading (`assumed: true`), flags and notes, the union of its Confident Intervals, and notes on the status |
 | `GET /api/snapshots/{fingerprint}/time-parses` | how every Time cell in the Snapshot parsed: Ticket counts and Excel rows by status and raw type |
 | `GET /api/snapshots/{fingerprint}/time-comparison?excel_row=A&excel_row=B` | whether two Tickets' work periods overlap: `result`, `basis`, `assumed`, the `intersection` and `overlap_minutes`, an explanation, and both parse results. Exactly two rows, or 422 |
@@ -148,19 +167,24 @@ Tests that need shapes the export does not have build a minimal same-schema work
 
 ```sh
 uv run pytest                             # API tests
-npm --prefix frontend run typecheck       # TypeScript
+npm --prefix frontend run typecheck       # TypeScript, app and frontend/e2e
+npm --prefix frontend run build           # then the browser tests, which need the built frontend
+npm --prefix frontend run e2e             # Playwright flows in frontend/e2e against the running process
 ```
 
 One test is skipped until the frontend has been built.
-CI (`.github/workflows/ci.yml`) builds the frontend and runs both on every pull request and on `main`.
+The browser tests (`@playwright/test` 1.56.1, Chromium) boot the application themselves on an ephemeral port with `.venv/bin/python` (override with `LTA_PYTHON`), and build any synthetic workbook through `tests/synthetic.py`; they assert text, roles and keyboard focus, not pixels.
+Install the browser once with `npx --prefix frontend playwright install chromium`.
+CI (`.github/workflows/ci.yml`) builds the frontend and runs all three on every pull request and on `main`.
 
 ## Layout
 
 ```
 src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), normalized (Ticket values for metrics),
                                metrics (registry), filters (filter bar), timeparse (interval parser), rules (matching rules, possible duplicates, priority),
+                               evidence (evidence drawer payload), annotations (+ annotations.json, the evidence report's notes),
                                versions, store (DuckDB Snapshot tables), api (HTTP)
-frontend/                      React + TypeScript shell built with Vite into frontend/dist
+frontend/                      React + TypeScript shell built with Vite into frontend/dist; e2e/ holds the Playwright flows
 tests/                         API tests at the booted-app seam
 data/                          the committed source workbook (private repository, ADR 0003)
 docs/                          PRD, decision log, ADRs, handoff sources

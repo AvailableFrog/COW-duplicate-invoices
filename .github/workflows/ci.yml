@@ -26,3 +26,7 @@ jobs:
         run: npm --prefix frontend run build
       - name: API tests
         run: uv run pytest
+      - name: Install Chromium for the browser tests
+        run: npx --prefix frontend playwright install --with-deps chromium
+      - name: Browser tests
+        run: npm --prefix frontend run e2e

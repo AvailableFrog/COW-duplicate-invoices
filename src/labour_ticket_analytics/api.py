@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
+from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
 from labour_ticket_analytics.rules import RULES, TIERS
@@ -226,6 +227,12 @@ def create_app(state: AppState) -> FastAPI:
             **context(fingerprint),
         }
 
+    @app.get("/api/annotations")
+    def annotations() -> dict:
+        fingerprint = state.active_fingerprint
+        excel_rows = state.store.excel_rows_by_ticket_number(fingerprint, ANNOTATIONS.tickets)
+        return {**ANNOTATIONS.payload(excel_rows), **context(fingerprint)}
+
     @app.get("/api/filters")
     def filter_options() -> dict:
         fingerprint = state.active_fingerprint
@@ -271,6 +278,17 @@ def create_app(state: AppState) -> FastAPI:
         if parse is None:
             raise no_ticket(fingerprint, excel_row)
         return parse
+
+    @app.get("/api/snapshots/{fingerprint}/tickets/{excel_row}/possible-duplicate")
+    def possible_duplicate(fingerprint: str, excel_row: int, query: dict = Depends(filter_query)) -> dict:
+        if state.store.ticket(fingerprint, excel_row) is None:
+            raise no_ticket(fingerprint, excel_row)
+        payload = state.store.possible_duplicate_evidence(fingerprint, excel_row, active_filters(fingerprint, query))
+        if payload is None:
+            raise HTTPException(
+                status_code=404, detail=f"the Ticket at Excel row {excel_row} is in no possible duplicate"
+            )
+        return {**payload, **context(fingerprint)}
 
     @app.get("/api/snapshots/{fingerprint}/time-parses")
     def time_parse_summary(fingerprint: str) -> dict:
