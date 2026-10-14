@@ -7,12 +7,16 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
+from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
+from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
 from labour_ticket_analytics.store import SnapshotStore
+from labour_ticket_analytics.versions import versions
 from labour_ticket_analytics.workbook import WorkbookError, fingerprint_workbook, import_workbook
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -20,6 +24,22 @@ DEFAULT_AS_OF = dt.date(2026, 10, 8)
 AS_OF_NOTE = (
     "Analytical as-of date. The export carries no timestamp, so this is an assumption "
     "based on the latest Created date; it is never today's date."
+)
+AS_OF_CHANGED_NOTE = (
+    "Analytical as-of date set by the analyst in place of the default assumption of {default} "
+    "(the latest Created date). Ages are measured to it; it is never today's date."
+)
+
+# The header tiles, in display order. Each is a registry metric, never a constant.
+TILES = (
+    ("ticket_count", "Source records"),
+    ("marked_ticket_count", "Recorded Markers"),
+    ("pending_count", "Pending"),
+    ("approved_not_keyed_count", "Approved, not Keyed"),
+)
+TILES_OVERLAP_NOTE = (
+    "These tiles overlap conceptually and do not sum to the source records: each counts Tickets "
+    "from the same population, and one Ticket can fall under more than one tile."
 )
 
 MISSING_FRONTEND_HTML = """<!doctype html>
@@ -66,6 +86,21 @@ class AppState:
             return added
 
 
+class AsOfChange(BaseModel):
+    date: dt.date
+
+
+def filter_query(
+    date_basis: str = DEFAULT_DATE_BASIS,
+    date_from: dt.date | None = None,
+    date_to: dt.date | None = None,
+    job: list[int] = Query(default=[]),
+    status: list[str] = Query(default=[]),
+) -> dict:
+    """The global filter bar as query parameters; validated against the Snapshot by Filters.build."""
+    return {"date_basis": date_basis, "date_from": date_from, "date_to": date_to, "jobs": job, "statuses": status}
+
+
 def require_same_origin(request: Request) -> None:
     """Refuse a state-changing request that a browser sent on behalf of another site.
 
@@ -77,21 +112,50 @@ def require_same_origin(request: Request) -> None:
         return
     expected = f"{request.url.scheme}://{request.headers.get('host', '')}"
     if origin != expected:
-        raise HTTPException(status_code=403, detail="cross-site requests may not change the active Snapshot")
+        raise HTTPException(status_code=403, detail="cross-site requests may not change the application state")
 
 
 def create_app(state: AppState) -> FastAPI:
     app = FastAPI(title="Labour Ticket Analytics", version=__version__, docs_url=None, redoc_url=None)
 
+    def as_of_payload() -> dict:
+        is_default = state.as_of == DEFAULT_AS_OF
+        return {
+            "date": state.as_of.isoformat(),
+            "is_assumption": True,
+            "is_default": is_default,
+            "default": DEFAULT_AS_OF.isoformat(),
+            "note": AS_OF_NOTE if is_default else AS_OF_CHANGED_NOTE.format(default=DEFAULT_AS_OF.isoformat()),
+        }
+
+    def context(fingerprint: str) -> dict:
+        """What every response carrying numbers also carries: the Snapshot, as-of date and versions in effect."""
+        return {"snapshot_fingerprint": fingerprint, "as_of": as_of_payload(), "versions": versions()}
+
     def header_payload() -> dict:
-        snapshot = state.store.snapshot_header(state.active_fingerprint)
+        fingerprint = state.active_fingerprint
+        snapshot = state.store.snapshot_header(fingerprint)
         if snapshot is None:
             raise HTTPException(status_code=503, detail="no active Snapshot")
-        return {
-            "snapshot": snapshot,
-            "as_of": {"date": state.as_of.isoformat(), "is_assumption": True, "note": AS_OF_NOTE},
-            "versions": {"app": __version__},
-        }
+        return {"snapshot": snapshot, **context(fingerprint)}
+
+    def active_filters(fingerprint: str, query: dict) -> Filters:
+        try:
+            return Filters.build(fields=state.store.fields(fingerprint), **query)
+        except FilterError as error:
+            raise HTTPException(status_code=422, detail=error.payload()) from error
+
+    def evaluate(fingerprint: str, metric_id: str, filters: Filters, **options) -> dict:
+        metric = METRICS.get(metric_id)
+        if metric is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "unknown_metric", "field": "metric_id", "message": f"no metric {metric_id!r} in the registry"},
+            )
+        try:
+            return state.store.evaluate_metric(fingerprint, metric, filters, state.as_of, **options)
+        except MetricError as error:
+            raise HTTPException(status_code=422, detail=error.payload()) from error
 
     @app.get("/api/snapshot")
     def snapshot_header() -> dict:
@@ -108,11 +172,69 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/api/snapshots")
     def snapshots() -> dict:
+        fingerprint = state.active_fingerprint
         return {
             "snapshots": [
-                {**snapshot, "active": snapshot["fingerprint"] == state.active_fingerprint}
+                {**snapshot, "active": snapshot["fingerprint"] == fingerprint}
                 for snapshot in state.store.snapshots()
-            ]
+            ],
+            **context(fingerprint),
+        }
+
+    @app.get("/api/as-of")
+    def as_of() -> dict:
+        return context(state.active_fingerprint)
+
+    @app.put("/api/as-of")
+    def change_as_of(change: AsOfChange, request: Request) -> dict:
+        require_same_origin(request)
+        state.as_of = change.date
+        return context(state.active_fingerprint)
+
+    @app.get("/api/metrics")
+    def metric_registry() -> dict:
+        fingerprint = state.active_fingerprint
+        return {
+            "registry_version": versions()["registry"],
+            "metrics": registry_payload(state.store.fields(fingerprint)),
+            **context(fingerprint),
+        }
+
+    @app.get("/api/metrics/{metric_id}")
+    def metric_value(
+        metric_id: str, query: dict = Depends(filter_query), group_by: str | None = None, rows: bool = False
+    ) -> dict:
+        fingerprint = state.active_fingerprint
+        filters = active_filters(fingerprint, query)
+        return {**evaluate(fingerprint, metric_id, filters, group_by=group_by, include_rows=rows), **context(fingerprint)}
+
+    @app.get("/api/filters")
+    def filter_options() -> dict:
+        fingerprint = state.active_fingerprint
+        return {**state.store.filter_options(fingerprint), **context(fingerprint)}
+
+    @app.get("/api/overview/tiles")
+    def tiles(query: dict = Depends(filter_query)) -> dict:
+        fingerprint = state.active_fingerprint
+        filters = active_filters(fingerprint, query)
+        results = [(label, evaluate(fingerprint, metric_id, filters)) for metric_id, label in TILES]
+        return {
+            "tiles": [
+                {
+                    "metric_id": result["metric"]["id"],
+                    "label": label,
+                    "value": result["value"],
+                    "unit": result["metric"]["unit"],
+                    "definition": result["metric"]["definition"],
+                    "percentage": result["percentage"],
+                    "warnings": result["warnings"],
+                }
+                for label, result in results
+            ],
+            "note": TILES_OVERLAP_NOTE,
+            "grain": "Ticket",
+            "filters": filters.payload(),
+            **context(fingerprint),
         }
 
     @app.get("/api/snapshots/{fingerprint}/tickets/{excel_row}")
@@ -123,7 +245,7 @@ def create_app(state: AppState) -> FastAPI:
                 status_code=404,
                 detail=f"no Ticket at Excel row {excel_row} in Snapshot {fingerprint[:12]}",
             )
-        return payload
+        return {**payload, **context(fingerprint)}
 
     index_html = state.frontend_dist / "index.html"
     if index_html.is_file():

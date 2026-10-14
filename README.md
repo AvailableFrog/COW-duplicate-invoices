@@ -30,7 +30,9 @@ uv run labour-ticket-analytics "data/Labour Tickets Export.xlsx"
 ```
 
 Then open the printed address, by default `http://127.0.0.1:8765`.
-The header shows the Snapshot fingerprint (SHA-256 of the workbook), the sheet name, the row and field counts, the import issues, and the analytical as-of date, which is labelled as an assumption.
+The header shows the Snapshot fingerprint (SHA-256 of the workbook), the sheet name, the row and field counts, the import issues, and the analytical as-of date, which is labelled as an assumption and can be changed there.
+Below it, the filter bar (date basis and range, job, status, Clear) narrows every number, and the active filters and aggregation grain are shown under it.
+The Overview opens with four tiles from the metric registry: source records, Recorded Markers, Pending, and Approved/not-Keyed. They overlap conceptually and do not sum to the population.
 
 Options:
 
@@ -74,7 +76,19 @@ Text columns, including Time, are kept raw and not type-checked here; a numeric 
 | `GET /api/snapshot` | the active Snapshot header (fingerprint, sheet, row and field counts, fields, import issues, missing optional columns, disabled features) plus the as-of date in effect and the application version |
 | `POST /api/snapshot/reimport` | reads the workbook at the launch path again. Identical content keeps the same Snapshot (`"imported": false`); different content becomes a new active Snapshot beside the old one (`"imported": true`). A workbook that cannot be imported answers 422 and the active Snapshot stays. Requests from another site's page are refused |
 | `GET /api/snapshots` | every Snapshot imported in this run, oldest first, with the active one marked |
+| `GET /api/as-of`, `PUT /api/as-of` | the analytical as-of date in effect; `PUT {"date": "YYYY-MM-DD"}` changes it for every later response. It stays labelled as an assumption and never follows today's date. Requests from another site's page are refused |
+| `GET /api/metrics` | the metric registry and its version: the thirteen PRD metrics, each with ID, label, definition, unit, grain, allowed dimensions, null treatment, date basis, exclusions, lineage and availability (`available`, `disabled` by a missing column, or `awaiting_rule` until the matching rules exist) |
+| `GET /api/metrics/{metric_id}` | one metric under the filters below: its value (a count, sum, or for day and hour metrics the median with a `summary`), `percentage` with numerator and denominator where the metric is a share of `ticket_count`, `coverage` naming the Tickets left out or only partly valued and why, and `warnings`. `group_by` takes an allowed dimension (`Approval Status`, `Keyed`, `Job Number`, `Job Name`, `Supervisor`, `Occupation`); `rows=true` lists the contributing Excel rows |
+| `GET /api/overview/tiles` | the four header tiles under the filters, with their definitions, the overlap note, the grain and the filter state |
+| `GET /api/filters` | what the filter bar offers: date bases with their date spans, statuses and jobs with Ticket counts |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}` | one Ticket: its Excel row, dataframe index (Excel row minus 2), sheet, its import issues, and all cells with field name, position, raw type, raw value and number format. Blank cells have raw type `blank` and a null value; a numeric zero stays `0`; booleans stay `true` or `false`; dates are ISO 8601 text with raw type `datetime`; formulas have raw type `formula` and their formula text |
+
+Filters are query parameters on the metric and tile requests: `date_basis` (`Created`, `Date` or `Date Approved`, default `Created`), `date_from` and `date_to` (inclusive ISO dates on that basis), and repeatable `job` and `status`.
+Without a date range every metric covers all dates, so totals reconcile with the import; a Ticket whose filtered value is unusable falls outside an active filter.
+A filter, metric or dimension outside the allowlist answers 422 (404 for an unknown metric) with `detail.code`, `detail.field` and `detail.message`.
+
+Every response that carries numbers also carries `snapshot_fingerprint`, `as_of` and `versions` (`app`, `registry`, `rules`, `parser`).
+The rule and parser versions stay `0.0.0` until the matching rules and the interval parser exist.
 
 ## Tests
 
@@ -93,7 +107,8 @@ One test is skipped until the frontend has been built.
 ## Layout
 
 ```
-src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), store (DuckDB Snapshot tables), api (HTTP)
+src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), normalized (Ticket values for metrics),
+                               metrics (registry), filters (filter bar), versions, store (DuckDB Snapshot tables), api (HTTP)
 frontend/                      React + TypeScript shell built with Vite into frontend/dist
 tests/                         API tests at the booted-app seam
 data/                          the committed source workbook (private repository, ADR 0003)

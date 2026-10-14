@@ -17,6 +17,9 @@ from typing import Any, Iterable
 
 import duckdb
 
+from labour_ticket_analytics import metrics, normalized
+from labour_ticket_analytics.filters import DATE_BASES, Filters
+from labour_ticket_analytics.validation import APPROVAL_STATUSES
 from labour_ticket_analytics.workbook import Cell, Snapshot
 
 SCHEMA = """
@@ -63,6 +66,13 @@ CREATE TABLE cells (
     PRIMARY KEY (snapshot_fingerprint, excel_row, position)
 );
 """
+
+# Normalized values beside the raw cells: what metrics and filters read.
+SCHEMA += (
+    "CREATE TABLE ticket_values ("
+    + ", ".join(f"{name} {kind}" for name, kind in normalized.COLUMNS.items())
+    + ", PRIMARY KEY (snapshot_fingerprint, excel_row));"
+)
 
 TICKET_COLUMNS = {
     "snapshot_fingerprint": "VARCHAR",
@@ -184,6 +194,11 @@ class SnapshotStore:
                 for cell in ticket.cells
             ),
         )
+        self._bulk_insert(
+            "ticket_values",
+            normalized.COLUMNS,
+            (normalized.ticket_values(snapshot.fingerprint, ticket) for ticket in snapshot.tickets),
+        )
 
     def _bulk_insert(self, table: str, columns: dict[str, str], rows: Iterable[tuple[Any, ...]]) -> None:
         """Load rows through a short-lived newline-delimited JSON file.
@@ -249,6 +264,60 @@ class SnapshotStore:
             for row in rows
         ]
 
+    def fields(self, fingerprint: str) -> tuple[str, ...]:
+        with self._lock:
+            row = self.connection.execute("SELECT fields FROM snapshots WHERE fingerprint = ?", [fingerprint]).fetchone()
+        return tuple(row[0]) if row else ()
+
+    def evaluate_metric(
+        self,
+        fingerprint: str,
+        metric: metrics.Metric,
+        filters: Filters,
+        as_of: dt.date,
+        group_by: str | None = None,
+        include_rows: bool = False,
+    ) -> dict[str, Any]:
+        with self._lock:
+            return metrics.evaluate(
+                self.connection, fingerprint, self.fields(fingerprint), metric, filters, as_of, group_by, include_rows
+            )
+
+    def filter_options(self, fingerprint: str) -> dict[str, Any]:
+        """What the filter bar can offer for a Snapshot: date bases with their spans, statuses and jobs."""
+        with self._lock:
+            fields = self.fields(fingerprint)
+            spans = self.connection.execute(
+                "SELECT " + ", ".join(
+                    f"CAST(min({column}) AS DATE), CAST(max({column}) AS DATE)" for column, _ in DATE_BASES.values()
+                ) + " FROM ticket_values WHERE snapshot_fingerprint = ?",
+                [fingerprint],
+            ).fetchone()
+            statuses = dict(self.connection.execute(
+                "SELECT status, count(*) FROM ticket_values WHERE snapshot_fingerprint = ? AND status IS NOT NULL"
+                " GROUP BY status",
+                [fingerprint],
+            ).fetchall())
+            jobs = self.connection.execute(
+                "SELECT job_number, mode(job_name), count(*) FROM ticket_values"
+                " WHERE snapshot_fingerprint = ? AND job_number IS NOT NULL GROUP BY job_number ORDER BY job_number",
+                [fingerprint],
+            ).fetchall()
+        return {
+            "date_bases": [
+                {
+                    "id": basis,
+                    "label": label,
+                    "available": basis in fields,
+                    "earliest": _iso(spans[2 * index]),
+                    "latest": _iso(spans[2 * index + 1]),
+                }
+                for index, (basis, (_, label)) in enumerate(DATE_BASES.items())
+            ],
+            "statuses": [{"id": status, "tickets": statuses.get(status, 0)} for status in APPROVAL_STATUSES],
+            "jobs": [{"job_number": job, "job_name": name, "tickets": count} for job, name, count in jobs],
+        }
+
     def ticket(self, fingerprint: str, excel_row: int) -> dict[str, Any] | None:
         with self._lock:
             return self._ticket(fingerprint, excel_row)
@@ -311,6 +380,10 @@ def _cell_row(fingerprint: str, excel_row: int, cell: Cell) -> tuple[Any, ...]:
         *(values[name] for name in VALUE_COLUMNS),
         cell.number_format,
     )
+
+
+def _iso(value: dt.date | None) -> str | None:
+    return value.isoformat() if value is not None else None
 
 
 def _json_default(value: Any) -> str:

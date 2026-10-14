@@ -1,6 +1,19 @@
 import { useEffect, useState } from "react";
 
-import { fetchHeader, reimportWorkbook, type HeaderResponse } from "./api";
+import {
+  changeAsOf,
+  fetchFilterOptions,
+  fetchHeader,
+  fetchTiles,
+  NO_FILTERS,
+  reimportWorkbook,
+  type FilterOptions,
+  type FilterState,
+  type HeaderResponse,
+  type TilesResponse,
+} from "./api";
+import { ActiveFilters, FilterBar } from "./FilterBar";
+import { HeaderTiles } from "./HeaderTiles";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
 
 type Tab = "overview" | "explore";
@@ -15,6 +28,18 @@ export function App() {
   const [tab, setTab] = useState<Tab>("overview");
   const [reimportStatus, setReimportStatus] = useState<string>("");
   const [reimporting, setReimporting] = useState(false);
+  const [filters, setFilters] = useState<FilterState>(NO_FILTERS);
+  const [options, setOptions] = useState<FilterOptions | null>(null);
+  const [tiles, setTiles] = useState<TilesResponse | null>(null);
+  const [tilesError, setTilesError] = useState("");
+  // Bumped whenever the Snapshot or as-of date changes, so every view refetches its numbers.
+  const [generation, setGeneration] = useState(0);
+
+  async function applyAsOf(date: string) {
+    const provenance = await changeAsOf(date);
+    setState((current) => (current.kind === "ready" ? { kind: "ready", header: { ...current.header, ...provenance } } : current));
+    setGeneration((value) => value + 1);
+  }
 
   async function reimport() {
     setReimporting(true);
@@ -22,6 +47,7 @@ export function App() {
     try {
       const result = await reimportWorkbook();
       setState({ kind: "ready", header: result });
+      setGeneration((value) => value + 1);
       setReimportStatus(
         result.imported
           ? `The workbook has changed. It is now Snapshot ${result.snapshot.fingerprint.slice(0, 12)}; the previous Snapshot is unchanged.`
@@ -46,6 +72,30 @@ export function App() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchFilterOptions(controller.signal)
+      .then(setOptions)
+      .catch(() => {
+        // the bar still offers Clear; the tiles report any failure
+      });
+    return () => controller.abort();
+  }, [generation]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchTiles(filters, controller.signal)
+      .then((data) => {
+        setTiles(data);
+        setTilesError("");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setTilesError(error instanceof Error ? error.message : String(error));
+      });
+    return () => controller.abort();
+  }, [filters, generation]);
+
   return (
     <div className="app">
       <header className="masthead">
@@ -55,7 +105,7 @@ export function App() {
         </div>
         {state.kind === "ready" ? (
           <div className="snapshot-controls">
-            <SnapshotHeaderBar header={state.header} />
+            <SnapshotHeaderBar header={state.header} onAsOfChange={applyAsOf} />
             <button type="button" className="reimport" onClick={reimport} disabled={reimporting}>
               Reimport
             </button>
@@ -79,6 +129,14 @@ export function App() {
         </button>
       </nav>
 
+      <FilterBar options={options} filters={filters} onChange={setFilters} />
+      <ActiveFilters filters={tiles?.filters ?? null} grain={tiles?.grain ?? "Ticket"} />
+      {tilesError ? (
+        <p className="notice notice-error" role="alert">
+          The filters could not be applied: {tilesError}. Change them or choose Clear.
+        </p>
+      ) : null}
+
       <main className="content">
         {state.kind === "failed" ? (
           <section className="notice notice-error" role="alert">
@@ -92,9 +150,10 @@ export function App() {
         ) : tab === "overview" ? (
           <section aria-labelledby="overview-heading">
             <h2 id="overview-heading">Overview</h2>
+            {tiles ? <HeaderTiles data={tiles} /> : <p className="status">Loading the tiles…</p>}
             <p className="placeholder">
-              The header above identifies the Snapshot. The review priorities, Recorded Markers, processing queue and
-              data readiness views arrive with later tickets.
+              The review priorities, Recorded Markers, processing queue and data readiness views arrive with later
+              tickets.
             </p>
           </section>
         ) : (

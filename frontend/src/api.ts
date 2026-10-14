@@ -1,5 +1,6 @@
 // Types mirror the JSON the Python API returns. Every numeric response carries
-// the Snapshot fingerprint and the as-of date in effect.
+// the Snapshot fingerprint, the registry, rule and parser versions, and the
+// as-of date in effect.
 
 export interface ImportIssue {
   excel_row: number;
@@ -34,21 +35,132 @@ export interface SnapshotHeader {
 export interface AsOf {
   date: string;
   is_assumption: boolean;
+  is_default: boolean;
+  default: string;
   note: string;
 }
 
-export interface HeaderResponse {
-  snapshot: SnapshotHeader;
-  as_of: AsOf;
-  versions: { app: string };
+export interface Versions {
+  app: string;
+  registry: string;
+  rules: string;
+  parser: string;
 }
 
-export async function fetchHeader(signal?: AbortSignal): Promise<HeaderResponse> {
-  const response = await fetch("/api/snapshot", { signal });
-  if (!response.ok) {
-    throw new Error(`The service answered ${response.status} ${response.statusText}.`);
+/** Carried by every response with numbers: the Snapshot, as-of date and versions they were computed under. */
+export interface Provenance {
+  snapshot_fingerprint: string;
+  as_of: AsOf;
+  versions: Versions;
+}
+
+export interface HeaderResponse extends Provenance {
+  snapshot: SnapshotHeader;
+}
+
+export type DateBasis = "Created" | "Date" | "Date Approved";
+export type ApprovalStatus = "Approved" | "Pending" | "Rejected";
+
+/** The global filter bar's state; an empty list or null range means "all". */
+export interface FilterState {
+  dateBasis: DateBasis;
+  dateFrom: string | null;
+  dateTo: string | null;
+  job: number | null;
+  status: ApprovalStatus | null;
+}
+
+export const NO_FILTERS: FilterState = { dateBasis: "Created", dateFrom: null, dateTo: null, job: null, status: null };
+
+export interface FilterPayload {
+  date_basis: { id: DateBasis; label: string };
+  date_range: { from: string | null; to: string | null } | null;
+  jobs: number[];
+  statuses: ApprovalStatus[];
+  active: boolean;
+  description: string;
+}
+
+export interface FilterOptions extends Provenance {
+  date_bases: { id: DateBasis; label: string; available: boolean; earliest: string | null; latest: string | null }[];
+  statuses: { id: ApprovalStatus; tickets: number }[];
+  jobs: { job_number: number; job_name: string | null; tickets: number }[];
+}
+
+export interface Percentage {
+  numerator: number;
+  denominator: number;
+  denominator_metric: string;
+  ratio: number | null;
+}
+
+export interface Tile {
+  metric_id: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  definition: string;
+  percentage: Percentage | null;
+  warnings: string[];
+}
+
+export interface TilesResponse extends Provenance {
+  tiles: Tile[];
+  note: string;
+  grain: string;
+  filters: FilterPayload;
+}
+
+async function failure(response: Response): Promise<Error> {
+  let detail = `${response.status} ${response.statusText}`;
+  try {
+    const body = (await response.json()) as { detail?: unknown };
+    if (typeof body.detail === "string") detail = body.detail;
+    else if (body.detail && typeof body.detail === "object" && "message" in body.detail) {
+      detail = String((body.detail as { message: unknown }).message);
+    }
+  } catch {
+    // keep the status line
   }
-  return (await response.json()) as HeaderResponse;
+  return new Error(detail);
+}
+
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { signal });
+  if (!response.ok) throw await failure(response);
+  return (await response.json()) as T;
+}
+
+export function filterQuery(filters: FilterState): string {
+  const params = new URLSearchParams({ date_basis: filters.dateBasis });
+  if (filters.dateFrom) params.set("date_from", filters.dateFrom);
+  if (filters.dateTo) params.set("date_to", filters.dateTo);
+  if (filters.job !== null) params.set("job", String(filters.job));
+  if (filters.status !== null) params.set("status", filters.status);
+  return params.toString();
+}
+
+export function fetchHeader(signal?: AbortSignal): Promise<HeaderResponse> {
+  return getJson<HeaderResponse>("/api/snapshot", signal);
+}
+
+export function fetchFilterOptions(signal?: AbortSignal): Promise<FilterOptions> {
+  return getJson<FilterOptions>("/api/filters", signal);
+}
+
+export function fetchTiles(filters: FilterState, signal?: AbortSignal): Promise<TilesResponse> {
+  return getJson<TilesResponse>(`/api/overview/tiles?${filterQuery(filters)}`, signal);
+}
+
+/** Change the analytical as-of date; later responses are computed against it. */
+export async function changeAsOf(date: string): Promise<Provenance> {
+  const response = await fetch("/api/as-of", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date }),
+  });
+  if (!response.ok) throw await failure(response);
+  return (await response.json()) as Provenance;
 }
 
 export interface ReimportResponse extends HeaderResponse {
@@ -58,15 +170,6 @@ export interface ReimportResponse extends HeaderResponse {
 /** Re-read the workbook at the launch path; identical content keeps the same Snapshot. */
 export async function reimportWorkbook(): Promise<ReimportResponse> {
   const response = await fetch("/api/snapshot/reimport", { method: "POST" });
-  if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
-    try {
-      const body = (await response.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") detail = body.detail;
-    } catch {
-      // keep the status line
-    }
-    throw new Error(detail);
-  }
+  if (!response.ok) throw await failure(response);
   return (await response.json()) as ReimportResponse;
 }

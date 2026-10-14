@@ -61,7 +61,7 @@ def _business_id(cell: Cell) -> Any:
     if _is_missing(cell):
         return None
     if cell.field == "ID":
-        return _whole_number(cell)
+        return whole_number(cell)
     return str(cell.value)
 
 
@@ -106,7 +106,7 @@ def _cell_problem(cell: Cell) -> tuple[str, str] | None:
         return "error_value", f"{cell.field} holds the spreadsheet error {cell.value}"
     if cell.field in NUMBER_COLUMNS and not _is_number(cell):
         return "invalid_number", f"{cell.field} is {_shown(cell)}, which is not a number"
-    if cell.field in IDENTIFIER_COLUMNS and _whole_number(cell) is None:
+    if cell.field in IDENTIFIER_COLUMNS and whole_number(cell) is None:
         return "invalid_number", (
             f"{cell.field} is {_shown(cell)}, which is not a whole number written without grouping separators"
         )
@@ -130,7 +130,7 @@ def _is_number(cell: Cell) -> bool:
     return cell.raw_type in ("int", "float")
 
 
-def _whole_number(cell: Cell) -> int | None:
+def whole_number(cell: Cell) -> int | None:
     """The integer an identifier cell holds, or None when it holds anything else."""
     if cell.raw_type == "int":
         return cell.value
@@ -142,15 +142,26 @@ def _whole_number(cell: Cell) -> int | None:
 
 
 def _is_date(cell: Cell) -> bool:
-    if cell.raw_type in ("datetime", "date"):
-        return True
+    return date_value(cell) is not None
+
+
+def number_value(cell: Cell) -> float | None:
+    """The number an hours, pay or rate cell holds, or None when it holds anything else."""
+    return cell.value if _is_number(cell) else None
+
+
+def date_value(cell: Cell) -> dt.datetime | None:
+    """The moment a date cell holds: an Excel date or ISO 8601 text, never a guessed format."""
+    if cell.raw_type == "datetime":
+        return cell.value
+    if cell.raw_type == "date":
+        return dt.datetime.combine(cell.value, dt.time())
     if cell.raw_type != "str" or not ISO_DATE_TEXT.fullmatch(cell.value):
-        return False
+        return None
     try:
-        dt.datetime.fromisoformat(cell.value)
+        return dt.datetime.fromisoformat(cell.value)
     except ValueError:
-        return False
-    return True
+        return None
 
 
 def _shown(cell: Cell) -> str:
