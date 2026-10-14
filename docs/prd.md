@@ -134,7 +134,7 @@ Other rules will produce additional, less certain candidates.
 The flagged tile counts tickets; the exact-repeat tile counts possible duplicates and shows its ticket count explicitly.
 These tiles overlap conceptually and are not intended to sum to the population.
 
-**Priority ordering:** unflagged exact repeats where all members are Approved/Keyed first, mixed Approved/Pending cases next, then pending conflicts and flagged duplicates with unresolved counterparts.
+**Priority ordering:** unflagged exact repeats where all members are Approved/Keyed first, an Approved ticket beside a Pending or not-Keyed one next, then pending conflicts and flagged duplicates with unresolved counterparts, then possible duplicates holding a Rejected ticket or an unreadable status.
 Within a tier sort by oldest Created timestamp; ties break on the lowest Ticket Number.
 This is review priority, not a probability of wrongdoing.
 Do not rank employees or supervisors by suspected fraud.
@@ -193,6 +193,7 @@ Confidence means strength of matching evidence, not confidence that someone was 
 Do not include ticket ID, creation timestamps, approval timestamp, supervisor, or description in this baseline key.
 Those fields provide review evidence and can differ between otherwise repeated claims.
 Do not collapse the four hour/payment components into a single monetary value for matching.
+A typed Time cell compares by its type and value, so a numeric 0 matches only another 0; a blank never matches.
 
 This baseline yields 34 groups of two records in the supplied sample.
 Four groups have both tickets Approved/Keyed and nonzero jobs; one is Pending/Pending; one is Approved/Pending; 28 have at least one Rejected member.
