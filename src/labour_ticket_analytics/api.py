@@ -16,6 +16,7 @@ from labour_ticket_analytics import __version__
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
 from labour_ticket_analytics.store import SnapshotStore
+from labour_ticket_analytics.timeparse import PARSER_VERSION, TimeParse, compare
 from labour_ticket_analytics.versions import versions
 from labour_ticket_analytics.workbook import WorkbookError, fingerprint_workbook, import_workbook
 
@@ -232,15 +233,50 @@ def create_app(state: AppState) -> FastAPI:
             **context(fingerprint),
         }
 
+    def no_ticket(fingerprint: str, excel_row: int) -> HTTPException:
+        return HTTPException(status_code=404, detail=f"no Ticket at Excel row {excel_row} in Snapshot {fingerprint[:12]}")
+
     @app.get("/api/snapshots/{fingerprint}/tickets/{excel_row}")
     def ticket(fingerprint: str, excel_row: int) -> dict:
         payload = state.store.ticket(fingerprint, excel_row)
         if payload is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"no Ticket at Excel row {excel_row} in Snapshot {fingerprint[:12]}",
-            )
+            raise no_ticket(fingerprint, excel_row)
         return {**payload, **context(fingerprint)}
+
+    def time_parse(fingerprint: str, excel_row: int) -> TimeParse:
+        parse = state.store.time_parse(fingerprint, excel_row)
+        if parse is None:
+            raise no_ticket(fingerprint, excel_row)
+        return parse
+
+    @app.get("/api/snapshots/{fingerprint}/time-parses")
+    def time_parse_summary(fingerprint: str) -> dict:
+        summary = state.store.time_parse_summary(fingerprint)
+        if summary is None:
+            raise HTTPException(status_code=404, detail=f"no Snapshot {fingerprint[:12]}")
+        return {"parser_version": PARSER_VERSION, "by_status": summary, **context(fingerprint)}
+
+    @app.get("/api/snapshots/{fingerprint}/tickets/{excel_row}/time")
+    def ticket_time(fingerprint: str, excel_row: int) -> dict:
+        return {"excel_row": excel_row, **time_parse(fingerprint, excel_row).payload(), **context(fingerprint)}
+
+    @app.get("/api/snapshots/{fingerprint}/time-comparison")
+    def time_comparison(fingerprint: str, excel_row: list[int] = Query(default=[])) -> dict:
+        if len(excel_row) != 2:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "two_tickets_required",
+                    "field": "excel_row",
+                    "message": "give exactly two Excel rows to compare",
+                },
+            )
+        parses = [time_parse(fingerprint, row) for row in excel_row]
+        return {
+            **compare(*parses),
+            "tickets": [{"excel_row": row, **parse.payload()} for row, parse in zip(excel_row, parses)],
+            **context(fingerprint),
+        }
 
     index_html = state.frontend_dist / "index.html"
     if index_html.is_file():

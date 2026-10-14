@@ -41,7 +41,7 @@ A work period whose Time text lacks a meridiem or is otherwise open to more than
 _Avoid_: bad time, unparsed time, invalid time
 
 **Plausible Reading**:
-The single documented working-day interpretation shown for an Ambiguous Interval: a start between 5:00 and 11:59 is taken as AM, and an end numerically below the start as PM. Always labelled as assumed.
+The single documented working-day interpretation shown for an Ambiguous Interval: a start between 5:00 and 11:59 is taken as AM and one from 12:00 to 4:59 as afternoon, and an end numerically below the start as PM. Always labelled as assumed.
 _Avoid_: corrected time, fixed time, inferred time
 
 **Annotation**:

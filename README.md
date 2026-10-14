@@ -69,6 +69,24 @@ Nothing is dropped or repaired. A cell or business ID that fails validation stay
 
 Text columns, including Time, are kept raw and not type-checked here; a numeric zero in Time stays `0`.
 
+## Time parsing
+
+Every Ticket's Time cell is read once at import by the interval parser; the raw cell is never altered.
+Times are read in order and paired into start and end; dashes, `to`, `till`, `until`, underscores, slashes, `&`, `and`, commas, `+`, dots, colons and spaces may sit between them, so `730am 1030am _ 230pm 430pm` is two periods.
+Accepted times include `7:30`, `7.30`, `7;30`, `7/30am`, `730`, `0730`, `7 30` and `7`, with `am`, `pm`, `a`, `p`, `a.m.`, `p.m.` or `12 noon`, in any case and spacing.
+
+| Period | Reads as |
+|---|---|
+| both ends carry AM/PM, or one end is in 24-hour form (hour 0 or 13-23, or a leading zero) and neither carries AM/PM | a **Confident Interval** |
+| any end lacks AM/PM | an **Ambiguous Interval** with one **Plausible Reading**, labelled assumed: a start from 5:00 to 11:59 is AM and one from 12:00 to 4:59 afternoon; an end is the first reading at or after the start, so an end numerically below the start is PM; an end that carries AM/PM fixes the start |
+| ends before it starts | flagged `possible_overnight` when it starts at or after noon and ends before it, otherwise `reversed_endpoints`; no interval |
+| zero length, or 16 hours or longer on one Date | flagged `implausible_duration`; no interval |
+
+Intervals are half-open, so a period ending when another begins does not overlap, and Tickets are compared on the union of their intervals.
+Only Confident Intervals establish overlap or separation: a comparison is `overlap` when they intersect, `separate` when every period on both Tickets is confident and they do not, `ambiguous` (comparing Plausible Readings, assumed) when an Ambiguous Interval is involved, and `undetermined` when a Ticket has a flagged period or its Time is not `confident` or `ambiguous`.
+
+A parse result's status is `confident`, `ambiguous`, `flagged`, `unrecognized` (text that is not times, an odd number of times, or a typo such as `pn`, never guessed), `blank`, `zero_not_a_time` (a numeric 0, never midnight), `number_not_a_time`, `datetime_not_a_period` or `not_time_text`.
+
 ## API
 
 | Request | Returns |
@@ -82,13 +100,16 @@ Text columns, including Time, are kept raw and not type-checked here; a numeric 
 | `GET /api/overview/tiles` | the four header tiles under the filters, with their definitions, the overlap note, the grain and the filter state |
 | `GET /api/filters` | what the filter bar offers: date bases with their date spans, statuses and jobs with Ticket counts |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}` | one Ticket: its Excel row, dataframe index (Excel row minus 2), sheet, its import issues, and all cells with field name, position, raw type, raw value and number format. Blank cells have raw type `blank` and a null value; a numeric zero stays `0`; booleans stay `true` or `false`; dates are ISO 8601 text with raw type `datetime`; formulas have raw type `formula` and their formula text |
+| `GET /api/snapshots/{fingerprint}/tickets/{excel_row}/time` | the Ticket's Time cell as parsed: raw type and value, parser version, status, each period with its text, confidence (`confident` or `ambiguous`), interval, Plausible Reading (`assumed: true`), flags and notes, the union of its Confident Intervals, and notes on the status |
+| `GET /api/snapshots/{fingerprint}/time-parses` | how every Time cell in the Snapshot parsed: Ticket counts and Excel rows by status and raw type |
+| `GET /api/snapshots/{fingerprint}/time-comparison?excel_row=A&excel_row=B` | whether two Tickets' work periods overlap: `result`, `basis`, `assumed`, the `intersection` and `overlap_minutes`, an explanation, and both parse results. Exactly two rows, or 422 |
 
 Filters are query parameters on the metric and tile requests: `date_basis` (`Created`, `Date` or `Date Approved`, default `Created`), `date_from` and `date_to` (inclusive ISO dates on that basis), and repeatable `job` and `status`.
 Without a date range every metric covers all dates, so totals reconcile with the import; a Ticket whose filtered value is unusable falls outside an active filter.
 A filter, metric or dimension outside the allowlist answers 422 (404 for an unknown metric) with `detail.code`, `detail.field` and `detail.message`.
 
 Every response that carries numbers also carries `snapshot_fingerprint`, `as_of` and `versions` (`app`, `registry`, `rules`, `parser`).
-The rule and parser versions stay `0.0.0` until the matching rules and the interval parser exist.
+The rule version stays `0.0.0` until the matching rules exist.
 
 ## Tests
 
@@ -108,7 +129,7 @@ One test is skipped until the frontend has been built.
 
 ```
 src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), normalized (Ticket values for metrics),
-                               metrics (registry), filters (filter bar), versions, store (DuckDB Snapshot tables), api (HTTP)
+                               metrics (registry), filters (filter bar), timeparse (interval parser), versions, store (DuckDB Snapshot tables), api (HTTP)
 frontend/                      React + TypeScript shell built with Vite into frontend/dist
 tests/                         API tests at the booted-app seam
 data/                          the committed source workbook (private repository, ADR 0003)

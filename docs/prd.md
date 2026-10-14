@@ -207,7 +207,7 @@ Missing AM/PM, implausible durations, reversed endpoints, and possible overnight
 Return a plausible interpretation for review if useful, but do not call the work definitely separate on that basis.
 
 **Interval confidence policy.** A period with explicit AM/PM or in 24-hour form is a Confident Interval.
-A period without a meridiem is an Ambiguous Interval; it carries one Plausible Reading under the documented working-day interpretation: a start between 5:00 and 11:59 is taken as AM, and an end numerically below the start as PM, always labelled "assumed."
+A period without a meridiem is an Ambiguous Interval; it carries one Plausible Reading under the documented working-day interpretation: a start between 5:00 and 11:59 is taken as AM and one from 12:00 to 4:59 as afternoon, and an end numerically below the start as PM, always labelled "assumed."
 Only Confident Intervals can establish overlap or separation; Ambiguous Intervals can only produce the ambiguous-period comparison.
 Multiple periods in one cell split on underscore, slash, ampersand, "and", and commas.
 An overlap indicates conflicting work claims, not necessarily a duplicate whole invoice or a known excess value.

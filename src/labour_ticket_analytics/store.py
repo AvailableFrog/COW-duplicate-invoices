@@ -2,8 +2,9 @@
 
 Snapshot tables are rebuilt from the workbook on every launch and hold the
 source Tickets as cells with raw value, raw type, Excel row and dataframe
-index. Local review data (a later ticket) lives in a separate file and is
-never mixed into these tables.
+index. Each Ticket's Time cell is also parsed once at import and the parse
+results are kept beside the tables, keyed by Excel row. Local review data (a
+later ticket) lives in a separate file and is never mixed into these tables.
 """
 
 from __future__ import annotations
@@ -19,8 +20,9 @@ import duckdb
 
 from labour_ticket_analytics import metrics, normalized
 from labour_ticket_analytics.filters import DATE_BASES, Filters
+from labour_ticket_analytics.timeparse import TimeParse, parse_time
 from labour_ticket_analytics.validation import APPROVAL_STATUSES
-from labour_ticket_analytics.workbook import Cell, Snapshot
+from labour_ticket_analytics.workbook import Cell, Snapshot, Ticket
 
 SCHEMA = """
 CREATE TABLE snapshots (
@@ -116,6 +118,7 @@ class SnapshotStore:
         self.connection = connection or duckdb.connect(database=":memory:")
         self.connection.execute(SCHEMA)
         self._lock = threading.RLock()
+        self._time_parses: dict[str, dict[int, TimeParse]] = {}
 
     def has_snapshot(self, fingerprint: str) -> bool:
         with self._lock:
@@ -132,6 +135,7 @@ class SnapshotStore:
         with self._lock:
             if self.has_snapshot(snapshot.fingerprint):
                 return False
+            time_parses = {ticket.excel_row: _parse_ticket_time(ticket) for ticket in snapshot.tickets}
             self.connection.execute("BEGIN TRANSACTION")
             try:
                 self._insert(snapshot)
@@ -139,6 +143,7 @@ class SnapshotStore:
                 self.connection.execute("ROLLBACK")
                 raise
             self.connection.execute("COMMIT")
+            self._time_parses[snapshot.fingerprint] = time_parses
             return True
 
     def snapshots(self) -> list[dict[str, Any]]:
@@ -318,6 +323,25 @@ class SnapshotStore:
             "jobs": [{"job_number": job, "job_name": name, "tickets": count} for job, name, count in jobs],
         }
 
+    def time_parse(self, fingerprint: str, excel_row: int) -> TimeParse | None:
+        """A Ticket's Time cell as the interval parser read it at import."""
+        with self._lock:
+            return self._time_parses.get(fingerprint, {}).get(excel_row)
+
+    def time_parse_summary(self, fingerprint: str) -> list[dict[str, Any]] | None:
+        """How every Time cell in a Snapshot parsed: Tickets and Excel rows by status and raw type."""
+        with self._lock:
+            parses = self._time_parses.get(fingerprint)
+        if parses is None:
+            return None
+        groups: dict[tuple[str, str], list[int]] = {}
+        for excel_row, parse in parses.items():
+            groups.setdefault((parse.status, parse.raw_type), []).append(excel_row)
+        return [
+            {"status": status, "raw_type": raw_type, "tickets": len(rows), "excel_rows": sorted(rows)}
+            for (status, raw_type), rows in sorted(groups.items())
+        ]
+
     def ticket(self, fingerprint: str, excel_row: int) -> dict[str, Any] | None:
         with self._lock:
             return self._ticket(fingerprint, excel_row)
@@ -380,6 +404,11 @@ def _cell_row(fingerprint: str, excel_row: int, cell: Cell) -> tuple[Any, ...]:
         *(values[name] for name in VALUE_COLUMNS),
         cell.number_format,
     )
+
+
+def _parse_ticket_time(ticket: Ticket) -> TimeParse:
+    time = next(cell for cell in ticket.cells if cell.field == "Time")
+    return parse_time(time.raw_type, time.value)
 
 
 def _iso(value: dt.date | None) -> str | None:
