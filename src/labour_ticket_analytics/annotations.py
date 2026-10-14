@@ -14,6 +14,7 @@ them, so they can never create or shape a Possible Duplicate.
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,8 +34,13 @@ class Annotations:
         data = json.loads(path.read_text(encoding="utf-8"))
         return cls(data["source"], data["description"], data["tickets"], data["examples"])
 
-    def example(self, letter: str, excel_rows: dict[str, int | None], members: set[str] = frozenset()) -> dict[str, Any]:
-        """One example with its Tickets; `excel_rows` maps ticket numbers to their rows in the Snapshot shown."""
+    def example(self, letter: str, excel_rows: dict[str, int], members: Collection[str] = ()) -> dict[str, Any]:
+        """One example with its Tickets.
+
+        `excel_rows` maps ticket numbers to their rows in the Snapshot shown (a
+        missing number gives a null row); `members` are the ticket numbers in
+        the Possible Duplicate being shown, if any.
+        """
         return {
             "letter": letter,
             **self.examples[letter],

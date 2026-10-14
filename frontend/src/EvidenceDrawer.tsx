@@ -25,10 +25,11 @@ interface EvidenceDrawerProps {
   onClose: () => void;
 }
 
+// Each settled state remembers its target, so a newly opened drawer never shows the previous one's evidence.
 type LoadState =
   | { kind: "loading" }
-  | { kind: "ready"; data: EvidenceResponse }
-  | { kind: "failed"; message: string };
+  | { kind: "ready"; target: DrawerTarget; data: EvidenceResponse }
+  | { kind: "failed"; target: DrawerTarget; message: string };
 
 // Visible stand-ins for whitespace, shown only while "Show whitespace" is on.
 const WHITESPACE_MARKS: Record<string, string> = { " ": "·", "\t": "→", " ": "°", "\n": "↵\n", "\r": "←" };
@@ -364,7 +365,8 @@ function Evidence({ data }: { data: EvidenceResponse }) {
 /** The wide evidence drawer for one possible duplicate: a modal dialog closed by its button or Escape. */
 export function EvidenceDrawer({ target, filters, onClose }: EvidenceDrawerProps) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [settled, setState] = useState<LoadState>({ kind: "loading" });
+  const state: LoadState = settled.kind !== "loading" && settled.target === target ? settled : { kind: "loading" };
 
   useEffect(() => {
     const element = dialog.current;
@@ -376,12 +378,11 @@ export function EvidenceDrawer({ target, filters, onClose }: EvidenceDrawerProps
   useEffect(() => {
     if (!target) return;
     const controller = new AbortController();
-    setState({ kind: "loading" });
     fetchEvidence(target.fingerprint, target.excelRow, filters, controller.signal)
-      .then((data) => setState({ kind: "ready", data }))
+      .then((data) => setState({ kind: "ready", target, data }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        setState({ kind: "failed", message: error instanceof Error ? error.message : String(error) });
+        setState({ kind: "failed", target, message: error instanceof Error ? error.message : String(error) });
       });
     return () => controller.abort();
   }, [target, filters]);

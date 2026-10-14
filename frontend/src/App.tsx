@@ -52,7 +52,10 @@ export function App() {
 
   function closeEvidence() {
     setDrawer(null);
-    drawerOpener.current?.focus();
+    // The list may have re-rendered while the drawer was open; fall back to its heading.
+    const opener = drawerOpener.current;
+    if (opener?.isConnected) opener.focus();
+    else document.getElementById("priorities-heading")?.focus();
   }
 
   async function applyAsOf(date: string) {

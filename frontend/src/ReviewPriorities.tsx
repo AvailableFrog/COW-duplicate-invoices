@@ -19,7 +19,7 @@ function MemberLine({ member }: { member: Member }) {
   );
 }
 
-/** Called with a member Ticket's Excel row, which addresses the possible duplicate, and the button to refocus. */
+/** Opens the evidence for a possible duplicate; `opener` gets focus back when the drawer closes. */
 export type OpenEvidence = (item: PossibleDuplicate, opener: HTMLButtonElement) => void;
 
 function PriorityRow({ item, onOpen }: { item: PossibleDuplicate; onOpen: OpenEvidence }) {
@@ -66,7 +66,9 @@ export function ReviewPriorities({ data, onOpen }: { data: ReviewPrioritiesRespo
     .filter(({ items }) => items.length > 0);
   return (
     <section className="priorities" aria-labelledby="priorities-heading">
-      <h3 id="priorities-heading">Review priorities</h3>
+      <h3 id="priorities-heading" tabIndex={-1}>
+        Review priorities
+      </h3>
       <p className="muted">{data.note} Open a possible duplicate to see its evidence.</p>
       {tiers.length === 0 ? (
         <p className="status">No possible duplicates have a ticket inside these filters. Widen or clear the filters.</p>

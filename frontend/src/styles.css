@@ -5,6 +5,7 @@
   --line: #dcd9d2;
   --accent: #0f7b7b;
   --unresolved: #b4690e;
+  --unresolved-wash: #fdf1df;
   --error: #b42318;
   --panel: #ffffff;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -644,7 +645,7 @@ summary:focus-visible {
 
 .source-table tr.differs td,
 .source-table tr.differs .field-name {
-  background: #fdf1df;
+  background: var(--unresolved-wash);
 }
 
 .differs-mark {
