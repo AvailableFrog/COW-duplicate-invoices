@@ -1,0 +1,32 @@
+[project]
+name = "labour-ticket-analytics"
+version = "0.1.0"
+description = "Local-first review of C.O. Williams labour-ticket exports: one process, one workbook, every number traceable to its source cells."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "duckdb==1.5.6",
+    "fastapi==0.143.1",
+    "openpyxl==3.1.5",
+    "uvicorn==0.54.0",
+]
+
+[project.scripts]
+labour-ticket-analytics = "labour_ticket_analytics.cli:main"
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.1.1",
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/labour_ticket_analytics"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

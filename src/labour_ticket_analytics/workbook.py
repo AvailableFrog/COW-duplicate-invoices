@@ -1,0 +1,165 @@
+"""Read a labour-ticket workbook into an immutable Snapshot.
+
+Every cell keeps its raw value and raw type, its Excel row and its original
+dataframe index (Excel row minus 2), in the workbook's original order. The
+workbook is opened read-only and formulas, macros, links and embedded content
+are never executed. Nothing is ever written back.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import openpyxl
+
+FINGERPRINT_ALGORITHM = "sha256"
+HEADER_ROW = 1
+FIRST_DATA_ROW = HEADER_ROW + 1
+
+# Raw types a cell can carry. "blank" is an empty cell; "zero" never appears
+# here because a numeric zero is just an "int" or "float" whose value is 0.
+RawType = str
+
+
+@dataclass(frozen=True)
+class Cell:
+    field: str
+    position: int
+    raw_type: RawType
+    value: Any
+    number_format: str | None
+
+
+@dataclass(frozen=True)
+class Ticket:
+    excel_row: int
+    dataframe_index: int
+    cells: tuple[Cell, ...]
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    fingerprint: str
+    fingerprint_algorithm: str
+    workbook_name: str
+    sheet: str
+    fields: tuple[str, ...]
+    tickets: tuple[Ticket, ...]
+    imported_at: dt.datetime
+    import_issues: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+
+    @property
+    def row_count(self) -> int:
+        return len(self.tickets)
+
+    @property
+    def field_count(self) -> int:
+        return len(self.fields)
+
+
+class WorkbookError(Exception):
+    """The workbook cannot become a Snapshot; the message says why."""
+
+
+def fingerprint_workbook(path: Path) -> str:
+    digest = hashlib.new(FINGERPRINT_ALGORITHM)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def import_workbook(path: Path) -> Snapshot:
+    if not path.is_file():
+        raise WorkbookError(f"workbook not found: {path}")
+    fingerprint = fingerprint_workbook(path)
+    try:
+        book = openpyxl.load_workbook(path, read_only=True, data_only=False, keep_links=False)
+    except Exception as error:  # openpyxl raises several unrelated types
+        raise WorkbookError(f"workbook could not be read: {path.name} ({error})") from error
+    try:
+        if not book.sheetnames:
+            raise WorkbookError(f"workbook has no data sheet: {path.name}")
+        sheet = book[book.sheetnames[0]]
+        rows = sheet.iter_rows(min_row=HEADER_ROW)
+        header = next(rows, None)
+        if header is None:
+            raise WorkbookError(f"data sheet {sheet.title!r} has no header row")
+        fields = tuple(_header_name(cell.value, index) for index, cell in enumerate(header))
+        tickets = _read_tickets(rows, fields)
+    finally:
+        book.close()
+    return Snapshot(
+        fingerprint=fingerprint,
+        fingerprint_algorithm=FINGERPRINT_ALGORITHM,
+        workbook_name=path.name,
+        sheet=sheet.title,
+        fields=fields,
+        tickets=tuple(tickets),
+        imported_at=dt.datetime.now(dt.timezone.utc),
+    )
+
+
+def _header_name(value: Any, index: int) -> str:
+    if value is None or str(value) == "":
+        return f"Column {index + 1}"
+    return str(value)
+
+
+def _read_tickets(rows, fields: tuple[str, ...]) -> list[Ticket]:
+    tickets: list[Ticket] = []
+    for row in rows:
+        excel_row = row[0].row if row else None
+        if excel_row is None:
+            continue
+        cells = tuple(
+            _read_cell(fields[position], position, row[position] if position < len(row) else None)
+            for position in range(len(fields))
+        )
+        tickets.append(Ticket(excel_row=excel_row, dataframe_index=excel_row - FIRST_DATA_ROW, cells=cells))
+    while tickets and all(cell.raw_type == "blank" for cell in tickets[-1].cells):
+        tickets.pop()
+    return tickets
+
+
+def _read_cell(field_name: str, position: int, cell) -> Cell:
+    if cell is None:
+        return Cell(field_name, position, "blank", None, None)
+    raw_type, value = classify(cell.value, getattr(cell, "data_type", None))
+    number_format = getattr(cell, "number_format", None) if raw_type != "blank" else None
+    return Cell(field_name, position, raw_type, value, number_format)
+
+
+def classify(value: Any, data_type: str | None = None) -> tuple[RawType, Any]:
+    """Name the raw type of a cell value without changing the value.
+
+    Booleans come before integers because bool subclasses int. A numeric zero
+    stays a number; it is never read as midnight.
+    """
+    if value is None:
+        return "blank", None
+    if data_type == "f":
+        return "formula", str(value)
+    if data_type == "e":
+        return "error", str(value)
+    if isinstance(value, bool):
+        return "bool", value
+    if isinstance(value, int):
+        return "int", value
+    if isinstance(value, float):
+        return "float", value
+    if isinstance(value, dt.datetime):
+        return "datetime", value
+    if isinstance(value, dt.date):
+        return "date", value
+    if isinstance(value, dt.time):
+        return "time", value
+    if isinstance(value, dt.timedelta):
+        return "duration", value
+    if isinstance(value, str):
+        return "str", value
+    return "str", str(value)

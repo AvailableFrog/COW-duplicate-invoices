@@ -1,0 +1,245 @@
+"""DuckDB tables for Snapshots.
+
+Snapshot tables are rebuilt from the workbook on every launch and hold the
+source Tickets as cells with raw value, raw type, Excel row and dataframe
+index. Local review data (a later ticket) lives in a separate file and is
+never mixed into these tables.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+import tempfile
+from typing import Any, Iterable
+
+import duckdb
+
+from labour_ticket_analytics.workbook import Cell, Snapshot
+
+SCHEMA = """
+CREATE TABLE snapshots (
+    fingerprint VARCHAR PRIMARY KEY,
+    fingerprint_algorithm VARCHAR NOT NULL,
+    workbook_name VARCHAR NOT NULL,
+    sheet VARCHAR NOT NULL,
+    row_count INTEGER NOT NULL,
+    field_count INTEGER NOT NULL,
+    fields VARCHAR[] NOT NULL,
+    imported_at VARCHAR NOT NULL,
+    import_issues JSON NOT NULL
+);
+CREATE TABLE tickets (
+    snapshot_fingerprint VARCHAR NOT NULL,
+    excel_row INTEGER NOT NULL,
+    dataframe_index INTEGER NOT NULL,
+    source_order INTEGER NOT NULL,
+    PRIMARY KEY (snapshot_fingerprint, excel_row)
+);
+CREATE TABLE cells (
+    snapshot_fingerprint VARCHAR NOT NULL,
+    excel_row INTEGER NOT NULL,
+    position SMALLINT NOT NULL,
+    field VARCHAR NOT NULL,
+    raw_type VARCHAR NOT NULL,
+    value_text VARCHAR,
+    value_integer BIGINT,
+    value_number DOUBLE,
+    value_boolean BOOLEAN,
+    value_timestamp TIMESTAMP,
+    number_format VARCHAR,
+    PRIMARY KEY (snapshot_fingerprint, excel_row, position)
+);
+"""
+
+TICKET_COLUMNS = {
+    "snapshot_fingerprint": "VARCHAR",
+    "excel_row": "INTEGER",
+    "dataframe_index": "INTEGER",
+    "source_order": "INTEGER",
+}
+
+CELL_COLUMNS = {
+    "snapshot_fingerprint": "VARCHAR",
+    "excel_row": "INTEGER",
+    "position": "SMALLINT",
+    "field": "VARCHAR",
+    "raw_type": "VARCHAR",
+    "value_text": "VARCHAR",
+    "value_integer": "BIGINT",
+    "value_number": "DOUBLE",
+    "value_boolean": "BOOLEAN",
+    "value_timestamp": "TIMESTAMP",
+    "number_format": "VARCHAR",
+}
+
+
+class SnapshotStore:
+    def __init__(self, connection: duckdb.DuckDBPyConnection | None = None) -> None:
+        self.connection = connection or duckdb.connect(database=":memory:")
+        self.connection.execute(SCHEMA)
+
+    def add_snapshot(self, snapshot: Snapshot) -> None:
+        self.connection.execute(
+            "INSERT INTO snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                snapshot.fingerprint,
+                snapshot.fingerprint_algorithm,
+                snapshot.workbook_name,
+                snapshot.sheet,
+                snapshot.row_count,
+                snapshot.field_count,
+                list(snapshot.fields),
+                snapshot.imported_at.isoformat(),
+                json.dumps(list(snapshot.import_issues)),
+            ],
+        )
+        self._bulk_insert(
+            "tickets",
+            TICKET_COLUMNS,
+            (
+                (snapshot.fingerprint, ticket.excel_row, ticket.dataframe_index, order)
+                for order, ticket in enumerate(snapshot.tickets)
+            ),
+        )
+        self._bulk_insert(
+            "cells",
+            CELL_COLUMNS,
+            (
+                _cell_row(snapshot.fingerprint, ticket.excel_row, cell)
+                for ticket in snapshot.tickets
+                for cell in ticket.cells
+            ),
+        )
+
+    def _bulk_insert(self, table: str, columns: dict[str, str], rows: Iterable[tuple[Any, ...]]) -> None:
+        """Load rows through a short-lived newline-delimited JSON file.
+
+        Binding parameters row by row costs milliseconds per row in DuckDB;
+        its JSON reader loads the same rows in a fraction of a second. The
+        file is deleted as soon as the load finishes.
+        """
+        names = list(columns)
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
+            path = handle.name
+            for row in rows:
+                handle.write(json.dumps(dict(zip(names, row)), default=_json_default))
+                handle.write("\n")
+        try:
+            column_list = ", ".join(names)
+            self.connection.execute(
+                f"INSERT INTO {table} ({column_list}) SELECT {column_list}"
+                " FROM read_json(?, format = 'newline_delimited', columns = ?)",
+                [path, columns],
+            )
+        finally:
+            os.unlink(path)
+
+    def snapshot_header(self, fingerprint: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT fingerprint, fingerprint_algorithm, workbook_name, sheet, row_count, field_count,"
+            " fields, imported_at, import_issues FROM snapshots WHERE fingerprint = ?",
+            [fingerprint],
+        ).fetchone()
+        if row is None:
+            return None
+        issues = json.loads(row[8])
+        return {
+            "fingerprint": row[0],
+            "fingerprint_algorithm": row[1],
+            "workbook_name": row[2],
+            "sheet": row[3],
+            "row_count": row[4],
+            "field_count": row[5],
+            "fields": list(row[6]),
+            "imported_at": row[7],
+            "import_issue_count": len(issues),
+            "import_issues": issues,
+        }
+
+    def ticket(self, fingerprint: str, excel_row: int) -> dict[str, Any] | None:
+        provenance = self.connection.execute(
+            "SELECT t.dataframe_index, s.sheet FROM tickets t JOIN snapshots s"
+            " ON s.fingerprint = t.snapshot_fingerprint"
+            " WHERE t.snapshot_fingerprint = ? AND t.excel_row = ?",
+            [fingerprint, excel_row],
+        ).fetchone()
+        if provenance is None:
+            return None
+        rows = self.connection.execute(
+            "SELECT field, position, raw_type, value_text, value_integer, value_number,"
+            " value_boolean, value_timestamp, number_format FROM cells"
+            " WHERE snapshot_fingerprint = ? AND excel_row = ? ORDER BY position",
+            [fingerprint, excel_row],
+        ).fetchall()
+        return {
+            "snapshot_fingerprint": fingerprint,
+            "sheet": provenance[1],
+            "excel_row": excel_row,
+            "dataframe_index": provenance[0],
+            "cells": [_cell_payload(row) for row in rows],
+        }
+
+
+def _cell_row(fingerprint: str, excel_row: int, cell: Cell) -> tuple[Any, ...]:
+    text = integer = number = boolean = timestamp = None
+    value = cell.value
+    match cell.raw_type:
+        case "bool":
+            boolean = value
+        case "int":
+            integer = value
+        case "float":
+            number = value
+        case "datetime":
+            timestamp = value
+        case "date" | "time" | "duration":
+            text = value.isoformat() if hasattr(value, "isoformat") else str(value)
+        case "blank":
+            pass
+        case _:
+            text = value
+    return (
+        fingerprint,
+        excel_row,
+        cell.position,
+        cell.field,
+        cell.raw_type,
+        text,
+        integer,
+        number,
+        boolean,
+        timestamp,
+        cell.number_format,
+    )
+
+
+def _json_default(value: Any) -> str:
+    if isinstance(value, dt.datetime):
+        return value.isoformat(sep=" ")
+    raise TypeError(f"cannot serialise {type(value).__name__} for bulk insert")
+
+
+def _cell_payload(row: tuple[Any, ...]) -> dict[str, Any]:
+    field_name, position, raw_type, text, integer, number, boolean, timestamp, number_format = row
+    match raw_type:
+        case "bool":
+            value: Any = boolean
+        case "int":
+            value = integer
+        case "float":
+            value = number
+        case "datetime":
+            value = timestamp.isoformat() if isinstance(timestamp, dt.datetime) else timestamp
+        case "blank":
+            value = None
+        case _:
+            value = text
+    return {
+        "field": field_name,
+        "position": position,
+        "raw_type": raw_type,
+        "value": value,
+        "number_format": number_format,
+    }

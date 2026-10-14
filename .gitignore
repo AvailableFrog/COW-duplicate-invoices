@@ -4,10 +4,12 @@
 !data/Labour Tickets Export.xlsx
 *.duckdb
 *.duckdb.wal
-.scratch/
 
 # Python / Node
 __pycache__/
 .venv/
 node_modules/
 dist/
+.pytest_cache/
+*.egg-info/
+.scratch/
