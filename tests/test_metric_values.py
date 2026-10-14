@@ -79,9 +79,15 @@ def test_a_metric_needing_a_missing_column_is_disabled_with_a_reason(tmp_path):
 
 def test_candidate_tickets_union_the_tickets_of_every_candidate(app):
     body = app.get("/api/metrics/candidate_ticket_count").json()
+    listed = app.get("/api/review-priorities").json()["possible_duplicates"]
+    strict_rows = {
+        row for item in listed for candidate in item["candidates"] if candidate["rule_id"] == "strict_repeat"
+        for row in candidate["excel_rows"]
+    }
 
-    # The Strict repeat rule's 34 two-Ticket groups share no Ticket.
-    assert body["value"] == 68
+    # The Strict repeat rule's 34 two-Ticket groups share no Ticket; the other rules add more Tickets.
+    assert len(strict_rows) == 68
+    assert body["value"] == len({member["excel_row"] for item in listed for member in item["members"]}) > 68
     assert body["percentage"]["denominator"] == 2836
 
 

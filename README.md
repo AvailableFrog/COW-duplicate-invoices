@@ -92,17 +92,24 @@ A parse result's status is `confident`, `ambiguous`, `flagged`, `unrecognized` (
 
 ## Matching rules
 
-The rules run over normalized Ticket values when a Snapshot is imported and store each match as a **Candidate** between two Tickets, with the rule ID, the fields compared, the evidence strength and a reason.
+The rules run over normalized Ticket values when a Snapshot is imported and store each match as a **Candidate** between two Tickets, with the rule ID, the fields compared, the evidence strength, the pattern and a reason.
 Strength describes the matching evidence, never whether anyone was paid.
+Rules only compare Tickets in one search space: the same employee label (trimmed, case-folded, spaces collapsed) and the same Date as recorded. The search space is never a rule: two Tickets are not linked because their hours match on the same day.
 
-| Rule | Matches when | Strength |
-|---|---|---|
-| `strict_repeat` | Employee (trimmed, case-folded, spaces collapsed), Date as recorded, Job Number, Time (text trimmed, case-folded, spaces collapsed; a typed cell compares by its type and value, so the number 0 matches only another 0) and Regular Hours, Overtime, Double Time and Job Work Pay are all equal | strong |
+| Rule | Matches when | Strength | Pattern |
+|---|---|---|---|
+| `strict_repeat` | Employee, Date as recorded, Job Number, Time (text trimmed, case-folded, spaces collapsed; a typed cell compares by its type and value, so the number 0 matches only another 0) and Regular Hours, Overtime, Double Time and Job Work Pay are all equal | strong | Same claim appears twice |
+| `time_text_variant` | Job Number and all four claim components equal, Time differs after that normalization but every period on both reads as the same Confident Intervals, or the same runs of digits and letters differ only in spacing, case or punctuation; the reason names which | moderate | Same claim looks different as text |
+| `work_period_conflict` | the two Tickets' Confident Intervals intersect (half-open, union against union); jobs and claim components may differ. A conflicting work claim, not proof of a repeated whole ticket | moderate | Possible correction or resubmission |
+| `ambiguous_period_comparison` | same nonzero Job Number and all four claim components, distinct Time whose comparison is ambiguous (an Ambiguous Interval and no confident overlap); the reason gives the assumed overlap, if any, labelled assumed and never asserted | weak | Equal duration, separate periods; Possible correction or resubmission when the assumed readings would overlap |
 
-A blank or invalid comparison field never satisfies equality, so that Ticket is never in a strict group. ID, Ticket Number, timestamps, Supervisor and description are never compared; they stay review evidence.
+A blank or invalid comparison field never satisfies equality. ID, Ticket Number, timestamps, Supervisor and description are never compared; they stay review evidence.
 Rejected Tickets take part like any other.
+A pair several rules match keeps one Candidate per rule, each with its reason, and still has one Review Outcome.
+Confirmed Aliases (ticket #10) will widen the employee half of the search space, the one place it is defined (`PairTicket.search_key` in `rules.py`).
 
 **Possible duplicates** are the connected components of Candidate edges within one employee-and-date context, recomposed from the Candidates on every request.
+Every edge stays visible; Tickets joined only through another Ticket need not repeat each other, which a possible duplicate of three or more says in its reason, and no Ticket is ever called redundant.
 Each is named from its sorted member ticket numbers, for example "Possible duplicate L225526+L225761"; the name is for reading aloud, never a storage key (`docs/adr/0004`).
 
 Review priorities ranks them in four tiers, then by the oldest Created among the members, then by the lowest Ticket Number:
@@ -110,24 +117,27 @@ Review priorities ranks them in four tiers, then by the oldest Created among the
 | Tier | Holds |
 |---|---|
 | 1 | exact repeats, not flagged: a strict match with every ticket Approved and Keyed and none a flagged duplicate |
-| 2 | an Approved ticket beside a Pending or not-Keyed one, with nothing Rejected or flagged |
+| 2 | an Approved ticket beside a Pending or not-Keyed one, or Approved and Keyed tickets linked by a weaker rule, with nothing Rejected or flagged |
 | 3 | Pending conflicts, and anything holding a flagged duplicate (its counterpart is unresolved until review outcomes exist) |
 | 4 | anything holding a Rejected ticket or an unreadable status |
 
 This is review priority, not a probability of wrongdoing; no view ranks employees or supervisors.
-On the committed workbook the Strict repeat rule finds 34 two-ticket possible duplicates: C, D, E and F (rows 620/855, 974/1868, 1309/1656, 2206/2351) in tier 1, one Approved/Pending, one Pending/Pending and 28 with a Rejected ticket.
+On the committed workbook the Strict repeat rule finds 34 two-ticket groups: C, D, E and F (rows 620/855, 974/1868, 1309/1656, 2206/2351) lead tier 1, one Approved/Pending, one Pending/Pending and 28 with a Rejected ticket.
+The time-aware rules add G (82/103) as a Time-text variant, J (61/105) and B (33/79) as Ambiguous-period comparisons, and 79 Work-period conflicts (19 of them on strict pairs), for 78 possible duplicates in all; A (591/593), L (2151/2152) and J against Orlando's row 137 are not linked, and "Compare two tickets" says why.
 
 ## Evidence drawer
 
 Selecting a possible duplicate opens a wide drawer (a modal dialog; Escape or Close returns to the list) so it can be investigated without opening Excel:
 
-- **Why these tickets are together**: the reason in words, every Candidate with its rule, the two Excel rows, the fields compared, the evidence strength and how the two tickets' work periods compare, and the members' states ticket by ticket (status, Keyed, flagged duplicate), never a paid or unpaid summary.
+- **Why these tickets are together**: the reason in words, every Candidate with its rule, the two Excel rows, the fields compared, the evidence strength and how the two tickets' work periods compare (an overlap of Plausible Readings is labelled assumed), and the members' states ticket by ticket (status, Keyed, flagged duplicate), never a paid or unpaid summary.
 - **Review outcome**: the reviewer label, a Review Outcome with note and supporting reference for each Ticket pair, the kept and replaced tickets, and the review history; see [Review outcomes](#review-outcomes).
 - **Annotations**: when a member's ticket number is one of the evidence report's 29 example Tickets, its example letter (A-N), title, pattern, the condensed review note, the questions for Oliver and the report section they come from (`docs/source/labour-ticket-report-readable.md`). A possible duplicate with no annotated ticket shows none.
 - **Claim timeline**: the members in Created order with Date, Created, Modified, Date Approved and Supervisor.
 - **Source rows, side by side**: all source columns transposed, the field-name column fixed while the ticket columns scroll, each differing field highlighted and marked "Differs". A value differs when its text (exactly as written, spaces included), number, date, true/false or blank differs; 8 and 8.0 are the same number, but 0, false, blank and the text "0" are four different values. Cells render as text, never HTML, keeping line breaks and spaces; "Show whitespace" quotes text and draws spaces (·), tabs (→) and line breaks (↵) without changing the values.
 - **Time as parsed**: each member's raw Time, parse status, each period's confidence, interval and Plausible Reading (labelled assumed), and the parser version.
 - **Where each ticket comes from**: Excel row, dataframe index, sheet and workbook fingerprint, with any import issues.
+
+**Compare two tickets**, below the ranked list, takes any two Excel rows and opens the same drawer on that pair, linked or not: "Why these tickets are (not) linked" gives every rule's verdict with its reason, how the work periods compare and which possible duplicate each ticket is in, then the Annotations, timeline, source rows, Time as parsed and provenance. For A (rows 591 and 593) it says the Confident Intervals 12:30-16:30 and 07:30-11:30 do not intersect, so these are separate work periods, and that equal hours on the same day never link tickets on their own.
 
 Annotations live in `src/labour_ticket_analytics/annotations.json`, extracted once from the evidence report and keyed by ticket number; the report's Excel row is kept for reference only.
 They attach by ticket number, so they survive a re-export, and no matching rule reads them.
@@ -157,10 +167,11 @@ A reviewer records a local judgement from the evidence drawer without touching t
 | `GET /api/metrics` | the metric registry and its version: the thirteen PRD metrics, each with ID, label, definition, unit, grain, allowed dimensions, null treatment, date basis, exclusions, lineage and availability (`available`, or `disabled` by a missing column) |
 | `GET /api/metrics/{metric_id}` | one metric under the filters below: its value (a count, sum, or for day and hour metrics the median with a `summary`; `unflagged_exact_repeat_count` counts possible duplicates and gives their `tickets`), `percentage` with numerator and denominator where the metric is a share of `ticket_count`, `coverage` naming the Tickets left out or only partly valued and why, and `warnings`. `group_by` takes an allowed dimension (`Approval Status`, `Keyed`, `Job Number`, `Job Name`, `Supervisor`, `Occupation`); `rows=true` lists the contributing Excel rows |
 | `GET /api/overview/tiles` | the five header tiles under the filters, with their definitions, the overlap note, the grain and the filter state; a tile counting possible duplicates also gives their `tickets` |
-| `GET /api/review-priorities` | the ranked possible duplicates under the filters: each with `rank`, `display_id`, `tier`, `rule_ids`, `pattern_labels`, `summary`, its `members` (Excel row, ticket number, employee, Date, Job Number, status, Keyed, `flagged_duplicate`, Created, `in_filter`) and its `candidates` (Excel rows, rule ID, fields compared, evidence strength, reason, and the pair's Review Outcome as `outcome`, display only); plus the tier and rule definitions. A filter selects a possible duplicate when any member is inside it, and every member stays listed |
+| `GET /api/review-priorities` | the ranked possible duplicates under the filters: each with `rank`, `display_id`, `tier`, `rule_ids`, `pattern_labels`, `summary`, its `members` (Excel row, ticket number, employee, Date, Job Number, status, Keyed, `flagged_duplicate`, Created, `in_filter`) and its `candidates` (Excel rows, rule ID, fields compared, evidence strength, reason, pattern, and the pair's Review Outcome as `outcome`, display only); plus the tier and rule definitions. A filter selects a possible duplicate when any member is inside it, and every member stays listed |
 | `GET /api/filters` | what the filter bar offers: date bases with their date spans, statuses and jobs with Ticket counts |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}` | one Ticket: its Excel row, dataframe index (Excel row minus 2), sheet, its import issues, and all cells with field name, position, raw type, raw value and number format. Blank cells have raw type `blank` and a null value; a numeric zero stays `0`; booleans stay `true` or `false`; dates are ISO 8601 text with raw type `datetime`; formulas have raw type `formula` and their formula text |
 | `GET /api/snapshots/{fingerprint}/tickets/{excel_row}/possible-duplicate` | the evidence for the possible duplicate holding that Ticket; any member's row gives the same answer, and the display name is never the address. `display_id`, `tier`, `pattern_labels`, `reason`, `candidates` (each with `rule_label`, `time_comparison` and its pair's `outcome`), `review` (the five `outcome_values`; `pairs`, one per Candidate pair with its outcome, note, reference, reviewer, `recorded_at` and `saved`; the `links` and `history` touching its members), `status_breakdown` (member states, never payment), `members` (with `provenance`, `issues` and `time_parse`), `timeline` (members by Created with Date, Created, Modified, Date Approved, Supervisor), `fields` (one row per source column with `differs` and each member's raw type and value), `differing_fields` and `annotations`. Takes the filter parameters to label out-of-filter members. 404 when the Ticket is in no possible duplicate |
+| `GET /api/snapshots/{fingerprint}/pairs/{row}/{row}` | why two Tickets are or are not linked, in either row order: `excel_rows` (lower first), `same_employee_and_date`, `linked`, `rules` (every rule's `rule_id`, `rule_label`, `matched`, `evidence_strength`, `fields_compared` and `reason`, matched or not), `summary`, `time_comparison`, `possible_duplicate` (holding both, or null), and the drawer's `members` (each with its `possible_duplicate`), `timeline`, `fields`, `differing_fields` and `annotations`. Takes the filter parameters. 422 for one row given twice, 404 for an unknown row or Snapshot |
 | `GET /api/snapshots/{fingerprint}/review` | everything saved for a Snapshot: `outcome_values`, saved `outcomes`, `links`, `replaced_tickets` (the only Tickets an adjusted figure may leave out), `history` (newest first) and the review file in `store` |
 | `GET /api/snapshots/{fingerprint}/pairs/{row}/{row}/outcome`, `PUT` the same | a Candidate pair's Review Outcome (Not reviewed until saved) with its `history`; either row order is the same pair. `PUT {"outcome", "note", "reference", "reviewer", "rationale"}` saves it and answers with `changed`. `outcome` is `not_reviewed`, `confirmed_duplicate`, `not_a_duplicate`, `replacement_ticket` or `needs_follow_up`. 404 (`no_candidate`) when no Candidate links the rows; 422 with `detail.code` for an unknown outcome, a blank reviewer, text over its limit, a banned phrase, or a revision without a rationale. Requests from another site's page are refused |
 | `PUT /api/snapshots/{fingerprint}/replacement-links/{replaced_row}/{retained_row}`, `DELETE` the same | links a replaced Ticket to a kept one, or removes the link, with `{"reviewer", "rationale"}`; each change is a history row. 422 unless both are in one possible duplicate, 409 (`link_loop`) when the kept ticket already leads back to the replaced one through existing links, 404 when removing a link that does not exist. Requests from another site's page are refused |
@@ -201,7 +212,8 @@ src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns)
                                metrics (registry), filters (filter bar), timeparse (interval parser), rules (matching rules, possible duplicates, priority),
                                evidence (evidence drawer payload), annotations (+ annotations.json, the evidence report's notes),
                                versions, store (DuckDB Snapshot tables), review (local review file: outcomes, links, history), api (HTTP)
-frontend/                      React + TypeScript shell built with Vite into frontend/dist; e2e/ holds the Playwright flows
+frontend/                      React + TypeScript shell built with Vite into frontend/dist (src: App, FilterBar, HeaderTiles, ReviewPriorities,
+                               CompareTickets, EvidenceDrawer, ReviewPanel); e2e/ holds the Playwright flows
 tests/                         API tests at the booted-app seam
 data/                          the committed source workbook (private repository, ADR 0003)
 docs/                          PRD, decision log, ADRs, handoff sources

@@ -17,19 +17,34 @@ def member_states(possible_duplicate: dict) -> tuple[str, ...]:
     return tuple(sorted(member["status"] for member in possible_duplicate["members"]))
 
 
-def test_the_strict_repeat_rule_finds_34_two_ticket_possible_duplicates_with_the_published_source_states(app):
-    found = [item for item in priorities(app)["possible_duplicates"] if "strict_repeat" in item["rule_ids"]]
+def strict_pairs(app) -> list[list[dict]]:
+    """Each Strict repeat Candidate's two Tickets, from the possible duplicates that hold it."""
+    pairs = []
+    for item in priorities(app)["possible_duplicates"]:
+        members = {member["excel_row"]: member for member in item["members"]}
+        pairs += [
+            [members[row] for row in candidate["excel_rows"]]
+            for candidate in item["candidates"] if candidate["rule_id"] == "strict_repeat"
+        ]
+    return pairs
+
+
+def test_the_strict_repeat_rule_finds_34_two_ticket_groups_with_the_published_source_states(app):
+    found = strict_pairs(app)
 
     assert len(found) == 34
-    assert all(len(item["members"]) == 2 for item in found)
+    # Ticket #9: other rules may join a strict pair to more Tickets, but no Ticket is in two strict groups.
+    assert len({member["excel_row"] for pair in found for member in pair}) == 68
     approved_keyed_nonzero = [
-        item for item in found
-        if all(m["status"] == "Approved" and m["keyed"] is True and m["job_number"] != 0 for m in item["members"])
+        pair for pair in found
+        if all(m["status"] == "Approved" and m["keyed"] is True and m["job_number"] != 0 for m in pair)
     ]
-    with_rejected = [item for item in found if "Rejected" in member_states(item)]
+    with_rejected = [pair for pair in found if "Rejected" in {m["status"] for m in pair}]
     assert len(approved_keyed_nonzero) == 4
     assert len(with_rejected) == 28
-    assert Counter(member_states(item) for item in found if item not in approved_keyed_nonzero + with_rejected) == {
+    assert Counter(
+        tuple(sorted(m["status"] for m in pair)) for pair in found if pair not in approved_keyed_nonzero + with_rejected
+    ) == {
         ("Pending", "Pending"): 1,
         ("Approved", "Pending"): 1,
     }
@@ -50,15 +65,18 @@ def test_the_four_unflagged_approved_keyed_exact_repeats_lead_the_list_oldest_cr
     assert [item["rank"] for item in ranked] == list(range(1, len(ranked) + 1))
 
 
-def test_mixed_approved_and_pending_comes_next_then_pending_conflicts_then_rejected_members(app):
-    ranked = priorities(app)["possible_duplicates"]
+def test_among_strict_repeats_mixed_approved_and_pending_comes_next_then_pending_conflicts_then_rejected(app):
+    ranked = [item for item in priorities(app)["possible_duplicates"] if "strict_repeat" in item["rule_ids"]]
 
     assert member_rows(ranked[4]) == {425, 1191}
     assert ranked[4]["tier"]["rank"] == 2
-    assert member_rows(ranked[5]) == {84, 88}
-    assert ranked[5]["tier"]["rank"] == 3
-    assert all("Rejected" in member_states(item) and item["tier"]["rank"] == 4 for item in ranked[6:])
-    tier_four_created = [min(m["created"] for m in item["members"]) for item in ranked[6:]]
+    # I: the strict pair 999/1545 joins flagged duplicate 318 through overlapping times (ticket #9), so it
+    # sits with the flagged duplicates; the Pending/Pending pair follows by Created.
+    assert member_rows(ranked[5]) == {318, 999, 1545}
+    assert member_rows(ranked[6]) == {84, 88}
+    assert ranked[5]["tier"]["rank"] == ranked[6]["tier"]["rank"] == 3
+    assert all("Rejected" in member_states(item) and item["tier"]["rank"] == 4 for item in ranked[7:])
+    tier_four_created = [min(m["created"] for m in item["members"]) for item in ranked[7:]]
     assert tier_four_created == sorted(tier_four_created)
 
 
@@ -83,17 +101,18 @@ def test_every_candidate_carries_its_rule_fields_compared_evidence_strength_and_
     ranked = priorities(app)["possible_duplicates"]
     peter = by_rows(app, 620, 855)
 
-    assert peter["candidates"] == [
-        {
-            "excel_rows": [620, 855],
-            "rule_id": "strict_repeat",
-            "fields_compared": STRICT_FIELDS,
-            "evidence_strength": "strong",
-            "reason": peter["candidates"][0]["reason"],
-            # Ticket #8: each pair's Review Outcome rides along for display; nothing is saved in this session.
-            "outcome": {"id": "not_reviewed", "label": "Not reviewed"},
-        }
-    ]
+    assert peter["candidates"][0] == {
+        "excel_rows": [620, 855],
+        "rule_id": "strict_repeat",
+        "fields_compared": STRICT_FIELDS,
+        "evidence_strength": "strong",
+        "reason": peter["candidates"][0]["reason"],
+        "pattern": "Same claim appears twice",
+        # Ticket #8: each pair's Review Outcome rides along for display; nothing is saved in this session.
+        "outcome": {"id": "not_reviewed", "label": "Not reviewed"},
+    }
+    # Ticket #9: the same pair's identical confident times also overlap, a second Candidate for the same pair.
+    assert [(c["excel_rows"], c["rule_id"]) for c in peter["candidates"][1:]] == [([620, 855], "work_period_conflict")]
     assert "Same claim submitted twice" in peter["candidates"][0]["reason"]
     assert all(candidate["reason"] and candidate["fields_compared"] for item in ranked for candidate in item["candidates"])
 
@@ -101,7 +120,7 @@ def test_every_candidate_carries_its_rule_fields_compared_evidence_strength_and_
 def test_each_row_shows_pattern_labels_an_evidence_summary_and_member_source_states(app):
     peter = by_rows(app, 620, 855)
 
-    assert peter["pattern_labels"] == ["Same claim appears twice"]
+    assert peter["pattern_labels"] == ["Same claim appears twice", "Possible correction or resubmission"]
     assert "Same claim submitted twice" in peter["summary"]
     assert [
         (m["excel_row"], m["status"], m["keyed"], m["job_number"], m["flagged_duplicate"]) for m in peter["members"]
@@ -121,7 +140,8 @@ def test_a_blank_or_invalid_claim_component_never_forms_a_strict_group(tmp_path)
     with running(workbook, tmp_path) as booted:
         found = priorities(booted)["possible_duplicates"]
 
-    assert [member_rows(item) for item in found] == [{2, 3}]
+    # Their identical confident times still overlap, which the Work-period conflict rule reports (ticket #9).
+    assert [member_rows(item) for item in found if "strict_repeat" in item["rule_ids"]] == [{2, 3}]
 
 
 def test_tickets_differing_only_outside_the_strict_key_still_match_and_ties_break_on_lowest_ticket_number(tmp_path):
@@ -175,7 +195,7 @@ def test_responses_carry_the_rule_version_and_describe_each_rule(app):
 
     assert body["versions"]["rules"] != "0.0.0"
     assert tiles["versions"]["rules"] == body["versions"]["rules"]
-    assert [rule["id"] for rule in body["rules"]] == ["strict_repeat"]
+    assert [rule["id"] for rule in body["rules"]][0] == "strict_repeat"
     assert body["rules"][0]["fields_compared"] == STRICT_FIELDS
     assert [tier["rank"] for tier in body["tiers"]] == [1, 2, 3, 4]
 

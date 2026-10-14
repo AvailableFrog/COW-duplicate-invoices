@@ -62,10 +62,10 @@ test("the Peter Holder possible duplicate opens from the list by keyboard and it
 
 test("a possible duplicate with no annotated ticket shows no annotation", async ({ page, app }) => {
   await page.goto(app.baseURL);
-  const openers = page.getByRole("button", { name: /^Possible duplicate / });
-  await expect(openers).toHaveCount(34);
-  // Rank 5 is rows 425/1191, the Approved/Pending pair; none of its tickets is in the evidence report.
-  await openers.nth(4).click();
+  const listed = (await (await fetch(`${app.baseURL}/api/review-priorities`)).json()) as { possible_duplicates: unknown[] };
+  await expect(page.getByRole("button", { name: /^Possible duplicate / })).toHaveCount(listed.possible_duplicates.length);
+  // Rows 425/1191, the Approved/Pending strict pair; none of its tickets is in the evidence report.
+  await page.getByRole("button", { name: "Possible duplicate L225190+L225956" }).click();
 
   const drawer = page.getByRole("dialog");
   await expect(drawer.getByRole("heading", { name: "Why these tickets are together" })).toBeVisible();
