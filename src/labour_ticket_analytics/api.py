@@ -34,7 +34,7 @@ AS_OF_CHANGED_NOTE = (
 
 # The header tiles, in display order. Each is a registry metric, never a constant.
 TILES = (
-    "ticket_count", "marked_ticket_count", "unflagged_exact_repeat_count", "pending_count", "approved_not_keyed_count",
+    "ticket_count", "flagged_duplicate_count", "unflagged_exact_repeat_count", "pending_count", "approved_not_keyed_count",
 )
 TILES_OVERLAP_NOTE = (
     "These tiles overlap conceptually and do not sum to the Tickets in the Snapshot: they count Tickets, "

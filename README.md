@@ -32,7 +32,7 @@ uv run labour-ticket-analytics "data/Labour Tickets Export.xlsx"
 Then open the printed address, by default `http://127.0.0.1:8765`.
 The header shows the Snapshot fingerprint (SHA-256 of the workbook), the sheet name, the row and field counts, the import issues, and the analytical as-of date, which is labelled as an assumption and can be changed there.
 Below it, the filter bar (date basis and range, job, status, Clear) narrows every number, and the active filters and aggregation grain are shown under it.
-The Overview opens with five tiles from the metric registry: source records, Recorded Markers, exact repeats not flagged (possible duplicates, with their ticket count shown), Pending, and Approved/not-Keyed. They overlap conceptually and do not sum to the population.
+The Overview opens with five tiles from the metric registry: source records, flagged duplicates, exact repeats not flagged (possible duplicates, with their ticket count shown), Pending, and Approved/not-Keyed. They overlap conceptually and do not sum to the population.
 Below the tiles, Review priorities lists every possible duplicate the matching rules found, ranked for review.
 
 Options:

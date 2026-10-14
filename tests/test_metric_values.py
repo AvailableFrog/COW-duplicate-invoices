@@ -57,10 +57,10 @@ def test_employee_labels_are_counted_after_normalization(app):
 
 def test_known_base_value_reconciles_and_discloses_unpriced_labour(app):
     body = app.get("/api/metrics/known_base_value_bbd").json()
-    markers = app.get("/api/metrics/known_base_value_bbd", params={"job": 0, "status": "Approved"}).json()
+    flagged = app.get("/api/metrics/known_base_value_bbd", params={"job": 0, "status": "Approved"}).json()
 
     assert body["value"] == 341477.32
-    assert markers["value"] == 3399.71
+    assert flagged["value"] == 3399.71
     unpriced = {item["code"]: item for item in body["coverage"]["partial"]}["unpriced_labour"]
     assert (unpriced["tickets"], unpriced["quantity"], unpriced["quantity_unit"]) == (122, 881, "hours")
 
@@ -105,7 +105,7 @@ def test_an_unknown_metric_or_dimension_is_a_recoverable_error(app):
 
 
 def test_source_rows_behind_a_metric_can_be_listed(app):
-    body = app.get("/api/metrics/marked_ticket_count", params={"rows": "true"}).json()
+    body = app.get("/api/metrics/flagged_duplicate_count", params={"rows": "true"}).json()
 
     assert len(body["contributing_rows"]) == 28
     first = app.get(f"/api/snapshots/{body['snapshot_fingerprint']}/tickets/{body['contributing_rows'][0]}").json()

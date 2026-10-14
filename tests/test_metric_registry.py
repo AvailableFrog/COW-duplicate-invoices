@@ -1,7 +1,7 @@
 """Ticket #4: one versioned metric registry, served by the API."""
 
 PRD_METRIC_IDS = [
-    "ticket_count", "marked_ticket_count", "unflagged_exact_repeat_count", "candidate_ticket_count",
+    "ticket_count", "flagged_duplicate_count", "unflagged_exact_repeat_count", "candidate_ticket_count",
     "pending_count", "approved_not_keyed_count", "pending_submission_age_days",
     "approved_not_keyed_submission_age_days", "claimed_hours", "employee_label_count",
     "submission_lag_days", "observed_approval_interval_hours", "known_base_value_bbd",

@@ -19,7 +19,7 @@ import duckdb
 from labour_ticket_analytics.filters import DATE_BASES, Filters
 from labour_ticket_analytics.rules import IN_CANDIDATE_SQL, STRICT_KEY, strict_groups_sql
 
-REGISTRY_VERSION = "1.1.0"
+REGISTRY_VERSION = "1.2.0"
 
 # Grouping dimension ID (the source column) -> normalized column.
 DIMENSIONS = {
@@ -172,12 +172,13 @@ REGISTRY: tuple[Metric, ...] = (
         value="1",
     ),
     Metric(
-        id="marked_ticket_count",
-        label="Recorded Markers",
+        id="flagged_duplicate_count",
+        label="Flagged duplicates",
         definition=(
-            "Tickets whose Approval Status is Approved and whose Job Number is the number 0. "
-            "Oliver described these as “more than likely a duplicate”; the count records that marker "
-            "and asserts nothing about detection or payment. It counts Tickets, not confirmed Cases."
+            "Tickets staff flagged as duplicates by approving them with Job Number 0: Approval Status is Approved "
+            "and Job Number is the number 0. Oliver described these as “more than likely a duplicate”; the flag "
+            "is a fact about what staff did, and the count asserts nothing about whether the analysis agrees or "
+            "about payment. It counts Tickets, not Confirmed Duplicates."
         ),
         unit="tickets",
         grain="Ticket",
