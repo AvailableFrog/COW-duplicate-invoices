@@ -152,6 +152,7 @@ npm --prefix frontend run typecheck       # TypeScript
 ```
 
 One test is skipped until the frontend has been built.
+CI (`.github/workflows/ci.yml`) builds the frontend and runs both on every pull request and on `main`.
 
 ## Layout
 
