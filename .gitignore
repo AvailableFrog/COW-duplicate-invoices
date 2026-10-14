@@ -13,3 +13,5 @@ dist/
 .pytest_cache/
 *.egg-info/
 .scratch/
+frontend/test-results/
+frontend/playwright-report/

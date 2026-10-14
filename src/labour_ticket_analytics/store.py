@@ -21,7 +21,8 @@ from typing import Any, Iterable
 
 import duckdb
 
-from labour_ticket_analytics import metrics, normalized, rules
+from labour_ticket_analytics import evidence, metrics, normalized, rules
+from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DATE_BASES, Filters
 from labour_ticket_analytics.timeparse import TimeParse, parse_time
 from labour_ticket_analytics.validation import APPROVAL_STATUSES
@@ -344,17 +345,52 @@ class SnapshotStore:
         comparison is never truncated.
         """
         with self._lock:
-            candidates = [
-                rules.Candidate(row[0], row[1], row[2], tuple(row[3]), row[4], row[5])
-                for row in self.connection.execute(
-                    "SELECT rule_id, first_row, second_row, fields_compared, evidence_strength, reason"
-                    " FROM candidates WHERE snapshot_fingerprint = ?",
-                    [fingerprint],
-                ).fetchall()
-            ]
+            candidates = self._candidates(fingerprint)
             members = self._candidate_members(fingerprint, filters)
         composed = [rules.possible_duplicate(component, members) for component in rules.compose(candidates)]
         return rules.ranked([item for item in composed if any(member["in_filter"] for member in item["members"])])
+
+    def possible_duplicate_evidence(self, fingerprint: str, excel_row: int, filters: Filters) -> dict[str, Any] | None:
+        """The evidence for the Possible Duplicate holding a Ticket, or None when the Ticket is in none.
+
+        Possible Duplicates are disjoint, so any member Ticket names exactly
+        one; it is recomposed from the Candidates like the list, and every
+        member is shown whether or not it is inside the filters.
+        """
+        with self._lock:
+            component = next(
+                (
+                    component for component in rules.compose(self._candidates(fingerprint))
+                    if any(excel_row in (candidate.first_row, candidate.second_row) for candidate in component)
+                ),
+                None,
+            )
+            if component is None:
+                return None
+            item = rules.possible_duplicate(component, self._candidate_members(fingerprint, filters))
+            tickets = [self._ticket(fingerprint, member["excel_row"]) for member in item["members"]]
+            parses = {member["excel_row"]: self._time_parses[fingerprint][member["excel_row"]] for member in item["members"]}
+        return evidence.evidence(item, tickets, parses, ANNOTATIONS)
+
+    def excel_rows_by_ticket_number(self, fingerprint: str, ticket_numbers: Iterable[str]) -> dict[str, int]:
+        """Where each ticket number sits in a Snapshot, compared as written; the first row if it repeats."""
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT ticket_number, min(excel_row) FROM ticket_values"
+                " WHERE snapshot_fingerprint = ? AND list_contains(?, ticket_number) GROUP BY ticket_number",
+                [fingerprint, list(ticket_numbers)],
+            ).fetchall()
+        return dict(rows)
+
+    def _candidates(self, fingerprint: str) -> list[rules.Candidate]:
+        return [
+            rules.Candidate(row[0], row[1], row[2], tuple(row[3]), row[4], row[5])
+            for row in self.connection.execute(
+                "SELECT rule_id, first_row, second_row, fields_compared, evidence_strength, reason"
+                " FROM candidates WHERE snapshot_fingerprint = ?",
+                [fingerprint],
+            ).fetchall()
+        ]
 
     def _candidate_members(self, fingerprint: str, filters: Filters) -> dict[int, dict[str, Any]]:
         """Each Ticket in a Candidate with its source state and whether it is inside the filters."""

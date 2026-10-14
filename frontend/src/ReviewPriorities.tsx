@@ -19,12 +19,22 @@ function MemberLine({ member }: { member: Member }) {
   );
 }
 
-function PriorityRow({ item }: { item: PossibleDuplicate }) {
+/** Called with a member Ticket's Excel row, which addresses the possible duplicate, and the button to refocus. */
+export type OpenEvidence = (item: PossibleDuplicate, opener: HTMLButtonElement) => void;
+
+function PriorityRow({ item, onOpen }: { item: PossibleDuplicate; onOpen: OpenEvidence }) {
   return (
     <tr>
       <td className="num">{item.rank}</td>
       <th scope="row">
-        {item.display_id}
+        <button
+          type="button"
+          className="open-evidence"
+          aria-haspopup="dialog"
+          onClick={(event) => onOpen(item, event.currentTarget)}
+        >
+          {item.display_id}
+        </button>
         <span className="priority-who muted">
           {item.members[0].employee ?? "No employee"} · Date {item.members[0].date ?? "not usable"}
         </span>
@@ -50,14 +60,14 @@ function PriorityRow({ item }: { item: PossibleDuplicate }) {
 }
 
 /** The ranked possible duplicates, grouped under their priority tiers. */
-export function ReviewPriorities({ data }: { data: ReviewPrioritiesResponse }) {
+export function ReviewPriorities({ data, onOpen }: { data: ReviewPrioritiesResponse; onOpen: OpenEvidence }) {
   const tiers = data.tiers
     .map((tier) => ({ tier, items: data.possible_duplicates.filter((item) => item.tier.rank === tier.rank) }))
     .filter(({ items }) => items.length > 0);
   return (
     <section className="priorities" aria-labelledby="priorities-heading">
       <h3 id="priorities-heading">Review priorities</h3>
-      <p className="muted">{data.note}</p>
+      <p className="muted">{data.note} Open a possible duplicate to see its evidence.</p>
       {tiers.length === 0 ? (
         <p className="status">No possible duplicates have a ticket inside these filters. Widen or clear the filters.</p>
       ) : (
@@ -82,7 +92,7 @@ export function ReviewPriorities({ data }: { data: ReviewPrioritiesResponse }) {
                   </th>
                 </tr>
                 {items.map((item) => (
-                  <PriorityRow key={item.display_id} item={item} />
+                  <PriorityRow key={item.display_id} item={item} onOpen={onOpen} />
                 ))}
               </tbody>
             ))}
