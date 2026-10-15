@@ -36,7 +36,7 @@ from typing import Any, Iterable
 import duckdb
 
 REVIEW_FILE_NAME = "review.duckdb"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -161,6 +161,26 @@ CREATE TABLE IF NOT EXISTS alias_decisions (
     PRIMARY KEY (snapshot_fingerprint, first_label, second_label),
     CHECK (first_label < second_label)
 );
+CREATE TABLE IF NOT EXISTS decided_tickets (
+    snapshot_fingerprint VARCHAR NOT NULL,
+    excel_row INTEGER NOT NULL,
+    ticket_number VARCHAR,
+    cells JSON NOT NULL,
+    PRIMARY KEY (snapshot_fingerprint, excel_row)
+);
+CREATE TABLE IF NOT EXISTS carry_forward (
+    target_fingerprint VARCHAR NOT NULL,
+    kind VARCHAR NOT NULL,
+    subject VARCHAR NOT NULL,
+    source_fingerprint VARCHAR NOT NULL,
+    action VARCHAR NOT NULL,
+    reviewer VARCHAR NOT NULL,
+    recorded_at VARCHAR NOT NULL,
+    rationale VARCHAR NOT NULL,
+    revalidated BOOLEAN NOT NULL,
+    differences JSON NOT NULL,
+    PRIMARY KEY (target_fingerprint, kind, subject)
+);
 """
 
 # From schema version 1 (ticket #8): history rows gain the label pair an Alias decision is about.
@@ -168,6 +188,9 @@ MIGRATIONS = {
     1: "ALTER TABLE review_history ADD COLUMN IF NOT EXISTS employee_labels VARCHAR[];",
     # From schema version 2 (ticket #39): saved views, a new table the schema itself creates.
     2: "SELECT 1;",
+    # From schema version 3 (ticket #40): the decided Tickets' source values and the carry-forward decisions,
+    # new tables the schema itself creates.
+    3: "SELECT 1;",
 }
 
 
@@ -242,9 +265,10 @@ class ReviewStore:
         if row[0] is None:
             self.connection.execute("INSERT INTO review_store VALUES (?)", [SCHEMA_VERSION])
         elif row[0] in MIGRATIONS:
-            # An older review file keeps everything it holds and gains the new tables and columns.
+            # An older review file keeps everything it holds and gains the new tables and columns, one version at a time.
             with self._transaction():
-                self.connection.execute(MIGRATIONS[row[0]])
+                for version in range(row[0], SCHEMA_VERSION):
+                    self.connection.execute(MIGRATIONS[version])
                 self.connection.execute("UPDATE review_store SET schema_version = ?", [SCHEMA_VERSION])
         elif row[0] != SCHEMA_VERSION:
             raise ReviewStoreUnavailable(f"the review store {path} has schema version {row[0]}, expected {SCHEMA_VERSION}")
@@ -682,6 +706,246 @@ class ReviewStore:
                 if members & set(entry["excel_rows"]) or tuple(entry.get("employee_labels", ())) in alias_labels
             ],
         }
+
+    # Carrying decisions forward to a new Snapshot (ticket #40)
+
+    def remember_tickets(self, fingerprint: str, tickets: dict[int, dict[str, Any]], numbers: dict[int, str | None]) -> None:
+        """Keep the source values of Tickets a decision is about, so a later export can be compared with them
+        after the Snapshot itself is gone. A Snapshot's values never change, so a row already kept is left as it is."""
+        if not tickets:
+            return
+        with self._lock:
+            self.connection.executemany(
+                "INSERT OR IGNORE INTO decided_tickets VALUES (?, ?, ?, ?)",
+                [[fingerprint, row, numbers.get(row), json.dumps(cells)] for row, cells in sorted(tickets.items())],
+            )
+
+    def remembered_tickets(self, fingerprint: str, excel_rows: Iterable[int]) -> dict[int, dict[str, Any]]:
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT excel_row, cells FROM decided_tickets WHERE snapshot_fingerprint = ? AND list_contains(?, excel_row)",
+                [fingerprint, list(excel_rows)],
+            ).fetchall()
+        return {row: json.loads(cells) for row, cells in rows}
+
+    def decided_rows(self, fingerprint: str) -> list[int]:
+        """Every Ticket a saved outcome, link or Alias proposal of the Snapshot names."""
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT first_row FROM review_outcomes WHERE snapshot_fingerprint = $f"
+                " UNION SELECT second_row FROM review_outcomes WHERE snapshot_fingerprint = $f"
+                " UNION SELECT replaced_row FROM replacement_links WHERE snapshot_fingerprint = $f"
+                " UNION SELECT retained_row FROM replacement_links WHERE snapshot_fingerprint = $f"
+                " UNION SELECT unnest(excel_rows) FROM review_history WHERE snapshot_fingerprint = $f",
+                {"f": fingerprint},
+            ).fetchall()
+        return sorted(row for (row,) in rows)
+
+    def decisions_elsewhere(self, target: str) -> list[dict[str, Any]]:
+        """Every outcome, link and Alias decision saved on a Snapshot other than target, as a carry-forward source.
+
+        An outcome or link is addressed by its tickets' numbers (an outcome's
+        lower number first, a link's replaced one first) and an Alias by its
+        two labels. Each keeps its reviewer, time and rationale.
+        """
+        found: list[dict[str, Any]] = []
+        with self._lock:
+            for row in self.connection.execute(
+                "SELECT snapshot_fingerprint, first_row, second_row, first_ticket_number, second_ticket_number, outcome,"
+                " note, reference, reviewer, recorded_at FROM review_outcomes WHERE snapshot_fingerprint <> ?"
+                " ORDER BY snapshot_fingerprint, first_row, second_row",
+                [target],
+            ).fetchall():
+                source, first, second, first_number, second_number = row[:5]
+                ordered = sorted([(first_number, first), (second_number, second)], key=lambda item: (item[0] is None, item[0] or ""))
+                rationale = self.connection.execute(
+                    "SELECT rationale FROM review_history WHERE snapshot_fingerprint = ? AND kind = 'outcome' AND excel_rows = ?"
+                    " ORDER BY entry DESC LIMIT 1",
+                    [source, [first, second]],
+                ).fetchone()
+                found.append({
+                    "kind": "outcome",
+                    "subject": [number for number, _ in ordered],
+                    "source_fingerprint": source,
+                    "source_rows": [excel_row for _, excel_row in ordered],
+                    "value": {"outcome": outcome_label(row[5]), "note": row[6], "reference": row[7]},
+                    "reviewer": row[8],
+                    "recorded_at": row[9],
+                    "rationale": rationale[0] if rationale else "",
+                })
+            for row in self.connection.execute(
+                "SELECT snapshot_fingerprint, replaced_row, retained_row, replaced_ticket_number, retained_ticket_number,"
+                " reviewer, recorded_at, rationale FROM replacement_links WHERE snapshot_fingerprint <> ?"
+                " ORDER BY snapshot_fingerprint, recorded_at, replaced_row, retained_row",
+                [target],
+            ).fetchall():
+                found.append({
+                    "kind": "link",
+                    "subject": [row[3], row[4]],
+                    "source_fingerprint": row[0],
+                    "source_rows": [row[1], row[2]],
+                    "value": {},
+                    "reviewer": row[5],
+                    "recorded_at": row[6],
+                    "rationale": row[7],
+                })
+            for row in self.connection.execute(
+                "SELECT snapshot_fingerprint, first_label, second_label, decision, reviewer, recorded_at, rationale"
+                " FROM alias_decisions WHERE snapshot_fingerprint <> ? ORDER BY snapshot_fingerprint, first_label, second_label",
+                [target],
+            ).fetchall():
+                found.append({
+                    "kind": "alias",
+                    "subject": [row[1], row[2]],
+                    "source_fingerprint": row[0],
+                    "source_rows": [],
+                    "value": {"decision": alias_decision_label(row[3])},
+                    "reviewer": row[4],
+                    "recorded_at": row[5],
+                    "rationale": row[6],
+                })
+        return found
+
+    def carry_records(self, target: str) -> list[dict[str, Any]]:
+        """What reviewers did with the proposals for target: carried forward or not, by whom, when and why."""
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT kind, subject, source_fingerprint, action, reviewer, recorded_at, rationale, revalidated, differences"
+                " FROM carry_forward WHERE target_fingerprint = ? ORDER BY recorded_at, kind, subject",
+                [target],
+            ).fetchall()
+        return [
+            {
+                "kind": row[0],
+                "subject": json.loads(row[1]),
+                "source_fingerprint": row[2],
+                "action": row[3],
+                "reviewer": row[4],
+                "recorded_at": row[5],
+                "rationale": row[6],
+                "revalidated": row[7],
+                "differences": json.loads(row[8]),
+            }
+            for row in rows
+        ]
+
+    def accept_carry(
+        self,
+        target: str,
+        proposal: dict[str, Any],
+        target_rows: list[int],
+        target_numbers: list[str | None],
+        *,
+        reviewer: str,
+        rationale: str,
+        revalidated: bool,
+    ) -> None:
+        """Save a proposed decision on target as it was saved before, keeping its reviewer, time and rationale,
+        with a history row naming who carried it forward and when. The source Snapshot is left unchanged."""
+        reviewer = clean_text("reviewer", reviewer, required=True)
+        rationale = clean_text("rationale", rationale)
+        decision = proposal["decision"]
+        carried_from = {
+            "snapshot_fingerprint": proposal["source"]["snapshot_fingerprint"],
+            "excel_rows": proposal["source"]["excel_rows"],
+            "reviewer": decision["reviewer"],
+            "recorded_at": decision["recorded_at"],
+            "rationale": decision["rationale"],
+            "revalidated": revalidated,
+        }
+        note = (
+            f"Carried forward from Snapshot {carried_from['snapshot_fingerprint'][:12]}"
+            f"{' after revalidating what changed' if revalidated else ''}; originally saved by {decision['reviewer']} at "
+            f"{decision['recorded_at']}: {decision['rationale'] or 'no reason given'}."
+            + (f" {rationale}" if rationale else "")
+        )
+        kind = proposal["kind"]
+        now = _now()
+        with self._lock:
+            if self._carried(target, kind, proposal["subject"]):
+                raise ReviewError("already_decided", "id", "this proposal was already carried forward or declined", status=409)
+            with self._transaction():
+                if kind == "outcome":
+                    first, second = target_rows
+                    if (first, second) in self._outcomes(target, [(first, second)]):
+                        raise ReviewError(
+                            "already_reviewed", "id", "these tickets already have an outcome on this export", status=409,
+                        )
+                    value = decision["value"]
+                    self.connection.execute(
+                        "INSERT INTO review_outcomes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            target, first, second, *target_numbers, value["outcome"]["id"], value["note"], value["reference"],
+                            decision["reviewer"], decision["recorded_at"],
+                        ],
+                    )
+                    self._append_history(
+                        target, "outcome", [first, second], target_numbers, reviewer, now, None,
+                        {**value, "carried_from": carried_from}, note,
+                    )
+                elif kind == "link":
+                    replaced, retained = target_rows
+                    existing = {(link["replaced_row"], link["retained_row"]) for link in self._links(target)}
+                    if (replaced, retained) in existing:
+                        raise ReviewError("already_linked", "id", "this link is already recorded on this export", status=409)
+                    if _leads_to(existing, retained, replaced):
+                        raise ReviewError(
+                            "link_loop", "id",
+                            "this export already records the kept ticket as replaced in favour of the other one; remove "
+                            "that link first",
+                            status=409,
+                        )
+                    self.connection.execute(
+                        "INSERT INTO replacement_links VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        [target, replaced, retained, *target_numbers, decision["reviewer"], decision["recorded_at"], decision["rationale"]],
+                    )
+                    self._append_history(
+                        target, "link", [replaced, retained], target_numbers, reviewer, now, None,
+                        {**_link_value(replaced, retained, target_numbers), "carried_from": carried_from}, note,
+                    )
+                else:
+                    labels = tuple(proposal["subject"])
+                    if labels in self._alias_decisions(target):
+                        raise ReviewError("already_decided", "id", "this Alias is already decided on this export", status=409)
+                    decision_id = decision["value"]["decision"]["id"]
+                    self.connection.execute(
+                        "INSERT INTO alias_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        [target, *labels, decision_id, decision["reviewer"], decision["recorded_at"], decision["rationale"]],
+                    )
+                    self._append_history(
+                        target, "alias", target_rows, target_numbers, reviewer, now, None,
+                        {"labels": list(labels), "decision": alias_decision_label(decision_id), "carried_from": carried_from},
+                        note, labels,
+                    )
+                self._record_carry(target, proposal, "accepted", reviewer, now, rationale, revalidated)
+
+    def decline_carry(self, target: str, proposal: dict[str, Any], *, reviewer: str, rationale: str) -> None:
+        """Record that a proposal is not carried forward; nothing is saved on target and it is not proposed again."""
+        reviewer = clean_text("reviewer", reviewer, required=True)
+        rationale = clean_text("rationale", rationale)
+        with self._lock:
+            if self._carried(target, proposal["kind"], proposal["subject"]):
+                raise ReviewError("already_decided", "id", "this proposal was already carried forward or declined", status=409)
+            with self._transaction():
+                self._record_carry(target, proposal, "declined", reviewer, _now(), rationale, False)
+
+    def _carried(self, target: str, kind: str, subject: list[Any]) -> bool:
+        return self.connection.execute(
+            "SELECT count(*) FROM carry_forward WHERE target_fingerprint = ? AND kind = ? AND subject = ?",
+            [target, kind, json.dumps(subject)],
+        ).fetchone()[0] > 0
+
+    def _record_carry(
+        self, target: str, proposal: dict[str, Any], action: str, reviewer: str, recorded_at: str, rationale: str,
+        revalidated: bool,
+    ) -> None:
+        self.connection.execute(
+            "INSERT INTO carry_forward VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                target, proposal["kind"], json.dumps(proposal["subject"]), proposal["source"]["snapshot_fingerprint"],
+                action, reviewer, recorded_at, rationale, revalidated, json.dumps(proposal["differences"]),
+            ],
+        )
 
     # Saved views (ticket #39). They are not review data: saving one leaves the review revision, and so the
     # Explore result cache, untouched.

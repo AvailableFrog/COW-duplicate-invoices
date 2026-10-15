@@ -41,6 +41,7 @@ import { ValueContext } from "./ValueContext";
 import { ClaimedHoursByJob } from "./ClaimedHoursByJob";
 import { SubmissionTiming } from "./SubmissionTiming";
 import { SavedViews } from "./SavedViews";
+import { CarryForward } from "./CarryForward";
 
 type Tab = "overview" | "explore";
 
@@ -377,6 +378,13 @@ export function App() {
           <section aria-labelledby="overview-heading">
             <h2 id="overview-heading">Overview</h2>
             {tiles ? <HeaderTiles data={tiles} /> : <p className="status">Loading the tiles…</p>}
+            {state.kind === "ready" ? (
+              <CarryForward
+                fingerprint={state.header.snapshot_fingerprint}
+                refresh={generation + reviewGeneration}
+                onChanged={() => setReviewGeneration((value) => value + 1)}
+              />
+            ) : null}
             {prioritiesError ? (
               <p className="notice notice-error" role="alert">
                 The review priorities could not be loaded: {prioritiesError}. Change the filters or reload the page.

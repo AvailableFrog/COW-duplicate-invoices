@@ -1527,3 +1527,80 @@ export async function downloadCsv(kind: "table" | "drilldown", request: PlanRequ
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   return filename;
 }
+
+/** Ticket #40: a decision saved on an earlier Snapshot, proposed for the active one. */
+export type CarryStatus = "unchanged" | "changed" | "not_comparable" | "cannot_carry";
+
+export interface CarryDifference {
+  ticket_number: string;
+  field: string;
+  before: string | number | boolean | null;
+  after: string | number | boolean | null;
+}
+
+export interface CarryProposal {
+  id: string;
+  kind: "outcome" | "link" | "alias";
+  kind_label: string;
+  /** An outcome's two ticket numbers, a link's replaced then kept ticket number, or an Alias's two labels. */
+  subject: (string | null)[];
+  names?: string[];
+  source: { snapshot_fingerprint: string; excel_rows: number[] };
+  target: { excel_rows: number[]; ticket_numbers: (string | null)[] };
+  decision: {
+    value: { outcome?: OutcomeLabel; note?: string; reference?: string; decision?: AliasDecisionLabel };
+    reviewer: string;
+    recorded_at: string;
+    rationale: string;
+  };
+  status: CarryStatus;
+  status_label: string;
+  reason: string | null;
+  differences: CarryDifference[];
+  needs_revalidation: boolean;
+}
+
+export interface CarryRecord {
+  kind: CarryProposal["kind"];
+  subject: (string | null)[];
+  source_fingerprint: string;
+  action: "accepted" | "declined";
+  reviewer: string;
+  recorded_at: string;
+  rationale: string;
+  revalidated: boolean;
+  differences: CarryDifference[];
+}
+
+export interface CarryForwardResponse extends Provenance {
+  proposals: CarryProposal[];
+  carried: CarryRecord[];
+  declined: CarryRecord[];
+  note: string;
+}
+
+export function fetchCarryForward(fingerprint: string, signal?: AbortSignal): Promise<CarryForwardResponse> {
+  return getJson(`/api/snapshots/${encodeURIComponent(fingerprint)}/carry-forward`, signal);
+}
+
+export interface CarryAnswer {
+  id: string;
+  action: "carry" | "decline";
+  reviewer: string;
+  rationale: string;
+  revalidated: boolean;
+}
+
+/** Carry one proposal to the Snapshot, or decline it; returns the proposals as they now stand. */
+export async function answerCarryForward(
+  fingerprint: string,
+  answer: CarryAnswer,
+): Promise<CarryForwardResponse & { rules_ran: boolean }> {
+  const response = await fetch(`/api/snapshots/${encodeURIComponent(fingerprint)}/carry-forward`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(answer),
+  });
+  if (!response.ok) throw await failure(response);
+  return (await response.json()) as CarryForwardResponse & { rules_ran: boolean };
+}
