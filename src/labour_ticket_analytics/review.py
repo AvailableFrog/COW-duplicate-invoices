@@ -507,7 +507,7 @@ class ReviewStore:
         rationale = clean_text("rationale", rationale)
         labels = (proposal["labels"][0], proposal["labels"][1])
         # The history row names the Tickets proposing the Alias, so a drawer holding them lists it.
-        rows = sorted({row for pair in proposal["proposed_by"] for row in pair})
+        rows = proposing_rows(proposal)
         with self._lock:
             previous = self._alias_decisions(fingerprint).get(labels)
             changed = previous is None or previous["decision"]["id"] != decision
@@ -655,6 +655,11 @@ class ReviewStore:
             "history": history,
             "store": {"path": str(self.path.resolve()), "file": REVIEW_FILE_NAME},
         }
+
+
+def proposing_rows(proposal: dict[str, Any]) -> list[int]:
+    """The Excel rows of every Ticket pair proposing an Alias, in order."""
+    return sorted({row for pair in proposal["proposed_by"] for row in pair})
 
 
 def alias_decision_label(decision_id: str) -> dict[str, str]:

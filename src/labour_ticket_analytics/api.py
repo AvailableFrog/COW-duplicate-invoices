@@ -17,7 +17,9 @@ from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
 from labour_ticket_analytics.normalized import normalize_label
-from labour_ticket_analytics.review import ALIAS_DECISION_VALUES, ReviewError, ReviewStore, outcome_label, pair_key
+from labour_ticket_analytics.review import (
+    ALIAS_DECISION_VALUES, ReviewError, ReviewStore, outcome_label, pair_key, proposing_rows,
+)
 from labour_ticket_analytics.rules import RULES, TIERS, Aliases, alias_key
 from labour_ticket_analytics.store import SnapshotStore
 from labour_ticket_analytics.timeparse import PARSER_VERSION, TimeParse, compare
@@ -438,11 +440,10 @@ def create_app(state: AppState) -> FastAPI:
         require_same_origin(request)
         require_snapshot(fingerprint)
         proposal = alias_proposal(fingerprint, change.labels)
-        rows = sorted({row for pair in proposal["proposed_by"] for row in pair})
         with state.rules_lock:
             try:
                 saved = state.review.save_alias(
-                    fingerprint, proposal, state.store.ticket_numbers(fingerprint, rows),
+                    fingerprint, proposal, state.store.ticket_numbers(fingerprint, proposing_rows(proposal)),
                     decision=change.decision, reviewer=change.reviewer, rationale=change.rationale,
                 )
             except ReviewError as error:
