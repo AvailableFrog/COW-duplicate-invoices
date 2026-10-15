@@ -20,7 +20,7 @@ from labour_ticket_analytics.filters import DATE_BASES, TICKET_FIELDS, Filters
 from labour_ticket_analytics.rules import IN_CANDIDATE_SQL, STRICT_KEY, strict_groups_sql
 from labour_ticket_analytics.schema import REQUIRED_COLUMNS
 
-REGISTRY_VERSION = "1.6.0"
+REGISTRY_VERSION = "1.7.0"
 
 # Grouping dimension ID (the source column) -> normalized column: the Ticket fields filters also accept.
 DIMENSIONS = {name: field.column for name, field in TICKET_FIELDS.items()}
@@ -427,6 +427,35 @@ REGISTRY: tuple[Metric, ...] = (
                 "Regular Hours, Overtime or Double Time is missing or not a number",
             ),
         ),
+    ),
+    # Release 1.1 (ticket #33): the claimed-hours-by-job panel's analyst-reviewed alternative.
+    Metric(
+        id="reviewed_claimed_hours",
+        label="Analyst-reviewed claimed hours",
+        definition=(
+            "Claimed hours (Regular Hours + Overtime + Double Time as recorded) for every Ticket under the filters "
+            "except those a reviewer's kept/replaced link marks as replaced. Offered only beside the recorded figure, "
+            "never instead of it."
+        ),
+        unit="hours",
+        grain="Ticket",
+        aggregation="sum",
+        null_treatment="A Ticket with a missing or invalid hour component is left out and reported in a coverage warning, never counted as zero.",
+        exclusions_text=(
+            "Tickets an explicit kept/replaced link marks as replaced; a Review Outcome or note alone never does",
+            "Tickets with a missing or invalid Regular Hours, Overtime or Double Time cell",
+        ),
+        lineage="Each contributing Ticket's three hour cells, and the local review file's kept/replaced links.",
+        value=f"CAST({CLAIMED_HOURS_SQL} AS DECIMAL(18, 4))",
+        exclusions=(
+            Exclusion("replaced_by_review", REPLACED_BY_REVIEW_SQL, "a reviewer linked it as replaced by a kept ticket"),
+            Exclusion(
+                "hour_component_unusable",
+                HOURS_UNUSABLE_SQL,
+                "Regular Hours, Overtime or Double Time is missing or not a number",
+            ),
+        ),
+        reads_review_links=True,
     ),
     Metric(
         id="employee_label_count",
