@@ -873,7 +873,8 @@ summary:focus-visible {
   gap: 8px 16px;
 }
 
-.form-actions button[type="submit"] {
+.form-actions button[type="submit"],
+.form-actions button.primary {
   font: inherit;
   font-weight: 600;
   padding: 5px 14px;

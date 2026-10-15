@@ -16,8 +16,9 @@ from labour_ticket_analytics import __version__
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
-from labour_ticket_analytics.review import ReviewError, ReviewStore, outcome_label, pair_key
-from labour_ticket_analytics.rules import RULES, TIERS
+from labour_ticket_analytics.normalized import normalize_label
+from labour_ticket_analytics.review import ALIAS_DECISION_VALUES, ReviewError, ReviewStore, outcome_label, pair_key
+from labour_ticket_analytics.rules import RULES, TIERS, Aliases, alias_key
 from labour_ticket_analytics.store import SnapshotStore
 from labour_ticket_analytics.timeparse import PARSER_VERSION, TimeParse, compare
 from labour_ticket_analytics.versions import versions
@@ -42,6 +43,12 @@ TILES_OVERLAP_NOTE = (
     "These tiles overlap conceptually and do not sum to the Tickets in the Snapshot: they count Tickets, "
     "or possible duplicates with their Tickets shown, from the same population, and one Ticket can fall "
     "under more than one tile."
+)
+
+ALIASES_NOTE = (
+    "Proposed by the Name-space variant: the same claim under two names that are equal once spaces and case are "
+    "ignored. A confirmed Alias lets the Work-period conflict rule compare both labels' tickets as one employee; "
+    "it never merges the labels, and the employee-label count still counts both. A shared email is never a reason."
 )
 
 REVIEW_PRIORITIES_NOTE = (
@@ -71,6 +78,13 @@ class AppState:
     review: ReviewStore
     frontend_dist: Path = FRONTEND_DIST
     import_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Held while an Alias decision is saved and the rules run again, so the stored Candidates always
+    # reflect the latest decisions.
+    rules_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def aliases(self, fingerprint: str) -> Aliases:
+        """The Snapshot's confirmed Aliases, as the rules read them."""
+        return Aliases(self.review.confirmed_aliases(fingerprint))
 
     def reimport(self) -> bool:
         """Read the workbook at the launch path again and make it the active Snapshot.
@@ -88,7 +102,7 @@ class AppState:
             added = False
             if not self.store.has_snapshot(fingerprint):
                 snapshot = import_workbook(self.workbook_path)
-                added = self.store.add_snapshot(snapshot)
+                added = self.store.add_snapshot(snapshot, self.aliases(snapshot.fingerprint))
                 fingerprint = snapshot.fingerprint
             self.active_fingerprint = fingerprint
             return added
@@ -104,6 +118,15 @@ class OutcomeChange(BaseModel):
     outcome: str
     note: str = ""
     reference: str = ""
+    reviewer: str
+    rationale: str = ""
+
+
+class AliasChange(BaseModel):
+    """A reviewer's decision on a proposed Alias: the two employee labels, confirmed or rejected, and why."""
+
+    labels: list[str]
+    decision: str
     reviewer: str
     rationale: str = ""
 
@@ -204,6 +227,12 @@ def create_app(state: AppState) -> FastAPI:
         pairs: dict[tuple[int, int], set[str]] = {}
         for candidate in payload["candidates"]:
             pairs.setdefault(pair_key(*candidate["excel_rows"]), set()).add(candidate["rule_id"])
+        # The Aliases about two of the members' labels: proposed here, or widening a rule here once confirmed.
+        labels = {member["employee_label"] for member in payload["members"]}
+        proposals = [
+            proposal for proposal in state.store.alias_proposals(fingerprint).values()
+            if set(proposal["labels"]) <= labels
+        ]
         review = state.review.for_possible_duplicate(
             fingerprint,
             [
@@ -211,6 +240,7 @@ def create_app(state: AppState) -> FastAPI:
                 for pair, rule_ids in sorted(pairs.items())
             ],
             list(numbers),
+            proposals,
         )
         return {**with_outcomes(fingerprint, payload), "review": review}
 
@@ -369,6 +399,56 @@ def create_app(state: AppState) -> FastAPI:
     def review_summary(fingerprint: str) -> dict:
         require_snapshot(fingerprint)
         return {**state.review.summary(fingerprint), **context(fingerprint)}
+
+    def alias_proposal(fingerprint: str, labels: list[str]) -> dict:
+        """The proposal for two employee labels, as written or normalized; 404 unless a Name-space variant made one."""
+        normalized = [normalize_label(label) for label in labels]
+        if len(normalized) != 2 or None in normalized or normalized[0] == normalized[1]:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "two_labels_required", "field": "labels", "message": "give two different employee labels"},
+            )
+        key = alias_key(*normalized)
+        proposal = state.store.alias_proposals(fingerprint).get(key)
+        if proposal is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "no_alias_proposal",
+                    "field": "labels",
+                    "message": f"no Name-space variant proposes an Alias for {key[0]!r} and {key[1]!r} in Snapshot "
+                    f"{fingerprint[:12]}",
+                },
+            )
+        return proposal
+
+    @app.get("/api/snapshots/{fingerprint}/aliases")
+    def alias_list(fingerprint: str) -> dict:
+        require_snapshot(fingerprint)
+        return {
+            "aliases": state.review.aliases(fingerprint, state.store.alias_proposals(fingerprint).values()),
+            "decision_values": [value.payload() for value in ALIAS_DECISION_VALUES],
+            "note": ALIASES_NOTE,
+            **context(fingerprint),
+        }
+
+    @app.put("/api/snapshots/{fingerprint}/aliases")
+    def decide_alias(fingerprint: str, change: AliasChange, request: Request) -> dict:
+        """Confirm or reject a proposed Alias; a change runs every rule again over the Snapshot."""
+        require_same_origin(request)
+        require_snapshot(fingerprint)
+        proposal = alias_proposal(fingerprint, change.labels)
+        rows = sorted({row for pair in proposal["proposed_by"] for row in pair})
+        with state.rules_lock:
+            try:
+                saved = state.review.save_alias(
+                    fingerprint, proposal, state.store.ticket_numbers(fingerprint, rows),
+                    decision=change.decision, reviewer=change.reviewer, rationale=change.rationale,
+                )
+            except ReviewError as error:
+                raise review_failure(error) from error
+            rerun = state.store.rerun_rules(fingerprint, state.aliases(fingerprint)) if saved["changed"] else None
+        return {**saved, "rerun": rerun or {"added": [], "removed": []}, "rules_ran": rerun is not None, **context(fingerprint)}
 
     @app.get("/api/snapshots/{fingerprint}/pairs/{first_row}/{second_row}")
     def pair_explanation(fingerprint: str, first_row: int, second_row: int, query: dict = Depends(filter_query)) -> dict:

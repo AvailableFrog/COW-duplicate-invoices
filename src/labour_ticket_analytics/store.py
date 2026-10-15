@@ -6,6 +6,8 @@ index. Each Ticket's Time cell is also parsed once at import and the parse
 results are kept beside the tables, keyed by Excel row. The matching rules run
 at import too and their Candidates are stored as relationship edges, apart
 from the Tickets; Possible Duplicates are recomposed from them on every read.
+The rules run again over the whole Snapshot whenever its confirmed Aliases
+change, so the stored Candidates always reflect the Aliases in effect.
 Local review data lives in a separate file (review.py) and is never mixed
 into these tables.
 """
@@ -134,6 +136,8 @@ class SnapshotStore:
         self.connection.execute(SCHEMA)
         self._lock = threading.RLock()
         self._time_parses: dict[str, dict[int, TimeParse]] = {}
+        # The confirmed Aliases each Snapshot's stored Candidates were found under.
+        self._aliases: dict[str, rules.Aliases] = {}
 
     def has_snapshot(self, fingerprint: str) -> bool:
         with self._lock:
@@ -141,8 +145,8 @@ class SnapshotStore:
                 "SELECT count(*) FROM snapshots WHERE fingerprint = ?", [fingerprint]
             ).fetchone()[0] > 0
 
-    def add_snapshot(self, snapshot: Snapshot) -> bool:
-        """Store a Snapshot; a fingerprint already stored is left untouched.
+    def add_snapshot(self, snapshot: Snapshot, aliases: rules.Aliases = rules.NO_ALIASES) -> bool:
+        """Store a Snapshot and run the rules under its confirmed Aliases; a fingerprint already stored is left untouched.
 
         Returns whether anything was added, so reimporting identical content
         is a no-op that keeps the original import time and Tickets.
@@ -154,13 +158,74 @@ class SnapshotStore:
             self.connection.execute("BEGIN TRANSACTION")
             try:
                 self._insert(snapshot)
-                rules.record_candidates(self.connection, snapshot.fingerprint, time_parses)
+                rules.record_candidates(self.connection, snapshot.fingerprint, time_parses, aliases)
             except BaseException:
                 self.connection.execute("ROLLBACK")
                 raise
             self.connection.execute("COMMIT")
             self._time_parses[snapshot.fingerprint] = time_parses
+            self._aliases[snapshot.fingerprint] = aliases
             return True
+
+    def rerun_rules(self, fingerprint: str, aliases: rules.Aliases) -> dict[str, list[dict[str, Any]]]:
+        """Run every rule over the Snapshot again under these confirmed Aliases and replace its Candidates.
+
+        Returns the Candidates the run added and removed. Review data is keyed
+        by Ticket pairs and rows, never by Candidates, so nothing saved is lost:
+        an outcome whose pair loses its last Candidate is kept and shows again
+        if a later run links the pair once more.
+        """
+        with self._lock:
+            before = {_candidate_key(candidate): candidate for candidate in self._candidates(fingerprint)}
+            self.connection.execute("BEGIN TRANSACTION")
+            try:
+                self.connection.execute("DELETE FROM candidates WHERE snapshot_fingerprint = ?", [fingerprint])
+                found = rules.record_candidates(self.connection, fingerprint, self._time_parses[fingerprint], aliases)
+            except BaseException:
+                self.connection.execute("ROLLBACK")
+                raise
+            self.connection.execute("COMMIT")
+            self._aliases[fingerprint] = aliases
+        after = {_candidate_key(candidate): candidate for candidate in found}
+
+        def shown(candidate: rules.Candidate) -> dict[str, Any]:
+            return {**candidate.payload(), "rule_label": rules.RULES[candidate.rule_id].label}
+
+        return {
+            "added": [shown(after[key]) for key in sorted(after.keys() - before.keys())],
+            "removed": [shown(before[key]) for key in sorted(before.keys() - after.keys())],
+        }
+
+    def alias_proposals(self, fingerprint: str) -> dict[tuple[str, str], dict[str, Any]]:
+        """The Aliases the Name-space variant proposes, by sorted label pair.
+
+        Each carries the names as written and the Ticket pairs proposing it
+        (Excel rows, lower first). The rule never reads an Alias, so the
+        proposals are the same whatever was decided.
+        """
+        with self._lock:
+            pairs = sorted(
+                (candidate.first_row, candidate.second_row) for candidate in self._candidates(fingerprint)
+                if candidate.rule_id == rules.NAME_SPACE_VARIANT.id
+            )
+            rows = sorted({row for pair in pairs for row in pair})
+            tickets = {
+                row[0]: row[1:]
+                for row in self.connection.execute(
+                    "SELECT excel_row, employee_label, employee_name FROM ticket_values"
+                    " WHERE snapshot_fingerprint = ? AND list_contains(?, excel_row)",
+                    [fingerprint, rows],
+                ).fetchall()
+            }
+        proposals: dict[tuple[str, str], dict[str, Any]] = {}
+        for first, second in pairs:
+            key = rules.alias_key(tickets[first][0], tickets[second][0])
+            proposal = proposals.setdefault(key, {"labels": list(key), "names": set(), "proposed_by": []})
+            proposal["names"].update((tickets[first][1], tickets[second][1]))
+            proposal["proposed_by"].append([first, second])
+        for proposal in proposals.values():
+            proposal["names"] = sorted(proposal["names"])
+        return dict(sorted(proposals.items()))
 
     def snapshots(self) -> list[dict[str, Any]]:
         """Every stored Snapshot in import order."""
@@ -387,6 +452,7 @@ class SnapshotStore:
             if parses is None or any(row not in parses for row in rows):
                 return None
             facts = rules.pair_tickets(self.connection, fingerprint, parses, rows)
+            aliases = self._aliases.get(fingerprint, rules.NO_ALIASES)
             members = self._members(fingerprint, filters, "list_contains($rows, t.excel_row)", {"rows": rows})
             tickets = [self._ticket(fingerprint, row) for row in rows]
             # The possible duplicate each Ticket is in, by display name; a Ticket in none has no entry.
@@ -397,7 +463,7 @@ class SnapshotStore:
                 if component_rows & set(rows):
                     name = rules.display_id([linked[row] for row in component_rows])
                     display_ids.update(dict.fromkeys(component_rows & set(rows), name))
-        explanation = rules.explain(facts[rows[0]], facts[rows[1]])
+        explanation = rules.explain(facts[rows[0]], facts[rows[1]], aliases)
         return evidence.pair_explanation(
             explanation, [members[row] for row in rows], tickets, parses, display_ids, ANNOTATIONS
         )
@@ -460,7 +526,8 @@ class SnapshotStore:
         filter_sql, parameters = filters.sql("t")
         rows = self.connection.execute(
             "SELECT t.excel_row, t.ticket_number, t.employee_name, t.work_date, t.job_number, t.status, t.keyed,"
-            f" COALESCE({metrics.FLAGGED_DUPLICATE_SCOPE}, false), t.created, COALESCE({filter_sql}, false)"
+            f" COALESCE({metrics.FLAGGED_DUPLICATE_SCOPE}, false), t.created, COALESCE({filter_sql}, false),"
+            " t.employee_label"
             f" FROM ticket_values t WHERE t.snapshot_fingerprint = $fingerprint AND {scope_sql}",
             {**parameters, **(scope_parameters or {}), "fingerprint": fingerprint},
         ).fetchall()
@@ -469,6 +536,8 @@ class SnapshotStore:
                 "excel_row": row[0],
                 "ticket_number": row[1],
                 "employee": row[2],
+                # The normalized label the rules compare; two labels stay two even under a confirmed Alias.
+                "employee_label": row[10],
                 "date": _iso(row[3].date()) if row[3] is not None else None,
                 "job_number": row[4],
                 "status": row[5],
@@ -526,6 +595,10 @@ class SnapshotStore:
             "cells": [_cell_payload(row) for row in rows],
             "issues": self._issues(fingerprint, excel_row),
         }
+
+
+def _candidate_key(candidate: rules.Candidate) -> tuple[int, int, str]:
+    return (candidate.first_row, candidate.second_row, candidate.rule_id)
 
 
 # Which storage column holds a cell's value, by raw type. Types not listed

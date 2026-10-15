@@ -1,4 +1,4 @@
-"""Local review data: Review Outcomes on Ticket pairs, kept/replaced links and their history.
+"""Local review data: Review Outcomes on Ticket pairs, kept/replaced links, Alias decisions and their history.
 
 A Review Outcome attaches to the order-independent pair of Tickets behind a
 Candidate, keyed by the Snapshot fingerprint and the pair's two Excel rows,
@@ -7,7 +7,10 @@ beside it for a later carry-forward to a new export, never as the key. A
 replacement link attaches to individual Tickets: one replaced Ticket and one
 kept (retained) Ticket, and a replaced Ticket may have several kept ones. A
 Possible Duplicate only displays the outcomes of its member pairs; it is never
-a key (ADR 0004).
+a key (ADR 0004). An Alias decision attaches to the unordered pair of
+normalized employee labels a Name-space variant proposed, within one Snapshot:
+a reviewer confirms or rejects it, and a confirmed Alias widens the employee
+key of the rules that accept one the next time the rules run.
 
 Everything here lives in one local DuckDB file in the data directory, apart
 from the in-memory Snapshot tables, and nothing is ever written to the
@@ -15,7 +18,8 @@ workbook (ADR 0002). Every save that changes an outcome, and every link made
 or removed, appends a history row with the reviewer label, the time, the
 previous and new values and the rationale. An outcome or a note has no
 numerical effect: only a replacement link names a Ticket an adjusted figure
-may leave out.
+may leave out. An Alias changes which Tickets the rules compare, never a count
+of employee labels.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ from typing import Any, Iterable
 import duckdb
 
 REVIEW_FILE_NAME = "review.duckdb"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,28 @@ OUTCOME_VALUES = (
 )
 OUTCOMES = {value.id: value for value in OUTCOME_VALUES}
 NOT_REVIEWED = OUTCOMES["not_reviewed"]
+
+# An Alias proposal's states, in display order. Proposed is the state before any decision is saved.
+ALIAS_DECISION_VALUES = (
+    OutcomeValue(
+        "proposed", "Proposed",
+        "A rule found the same claim under both names. Until a reviewer confirms it they stay two employee labels.",
+    ),
+    OutcomeValue(
+        "confirmed", "Confirmed",
+        "The reviewer says both labels name one person. The Work-period conflict rule then compares their tickets as"
+        " one employee; the employee-label count still counts two labels.",
+    ),
+    OutcomeValue(
+        "rejected", "Rejected",
+        "The reviewer does not accept that the labels name one person; nothing is compared across them beyond the"
+        " proposal itself.",
+    ),
+)
+ALIAS_DECISIONS = {value.id: value for value in ALIAS_DECISION_VALUES}
+PROPOSED = ALIAS_DECISIONS["proposed"]
+# What a reviewer can save; Proposed is only ever the state before a decision.
+SAVED_ALIAS_DECISIONS = ("confirmed", "rejected")
 
 # What no screen may say (GLOSSARY "Never claimed"), so no reviewer text may carry it either.
 BANNED_PHRASES = ("paid twice", "missed duplicate", "fraud")
@@ -105,9 +131,24 @@ CREATE TABLE IF NOT EXISTS review_history (
     recorded_at VARCHAR NOT NULL,
     previous_value JSON,
     new_value JSON,
-    rationale VARCHAR NOT NULL
+    rationale VARCHAR NOT NULL,
+    employee_labels VARCHAR[]
+);
+CREATE TABLE IF NOT EXISTS alias_decisions (
+    snapshot_fingerprint VARCHAR NOT NULL,
+    first_label VARCHAR NOT NULL,
+    second_label VARCHAR NOT NULL,
+    decision VARCHAR NOT NULL,
+    reviewer VARCHAR NOT NULL,
+    recorded_at VARCHAR NOT NULL,
+    rationale VARCHAR NOT NULL,
+    PRIMARY KEY (snapshot_fingerprint, first_label, second_label),
+    CHECK (first_label < second_label)
 );
 """
+
+# From schema version 1 (ticket #8): history rows gain the label pair an Alias decision is about.
+MIGRATIONS = {1: "ALTER TABLE review_history ADD COLUMN IF NOT EXISTS employee_labels VARCHAR[];"}
 
 
 class ReviewError(ValueError):
@@ -177,6 +218,11 @@ class ReviewStore:
         row = self.connection.execute("SELECT max(schema_version) FROM review_store").fetchone()
         if row[0] is None:
             self.connection.execute("INSERT INTO review_store VALUES (?)", [SCHEMA_VERSION])
+        elif row[0] in MIGRATIONS:
+            # An older review file keeps everything it holds and gains the new tables and columns.
+            with self._transaction():
+                self.connection.execute(MIGRATIONS[row[0]])
+                self.connection.execute("UPDATE review_store SET schema_version = ?", [SCHEMA_VERSION])
         elif row[0] != SCHEMA_VERSION:
             raise ReviewStoreUnavailable(f"the review store {path} has schema version {row[0]}, expected {SCHEMA_VERSION}")
 
@@ -395,16 +441,116 @@ class ReviewStore:
                 )
         return {**link, "removed": True}
 
+    # Alias decisions
+
+    def _alias_decisions(self, fingerprint: str) -> dict[tuple[str, str], dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT first_label, second_label, decision, reviewer, recorded_at, rationale FROM alias_decisions"
+            " WHERE snapshot_fingerprint = ? ORDER BY first_label, second_label",
+            [fingerprint],
+        ).fetchall()
+        return {
+            (row[0], row[1]): {
+                "decision": alias_decision_label(row[2]),
+                "reviewer": row[3],
+                "recorded_at": row[4],
+                "rationale": row[5],
+                "saved": True,
+            }
+            for row in rows
+        }
+
+    def confirmed_aliases(self, fingerprint: str) -> list[tuple[str, str]]:
+        """The label pairs a reviewer confirmed for a Snapshot: what the rules widen the employee key by."""
+        with self._lock:
+            return [
+                key for key, record in self._alias_decisions(fingerprint).items()
+                if record["decision"]["id"] == "confirmed"
+            ]
+
+    def aliases(self, fingerprint: str, proposals: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Each proposal (labels, names, proposed_by) with its decision, Proposed until saved, and its history."""
+        with self._lock:
+            saved = self._alias_decisions(fingerprint)
+            return [
+                {
+                    **proposal,
+                    **(saved.get(tuple(proposal["labels"])) or _undecided()),
+                    "history": self._history(fingerprint, kind="alias", labels=tuple(proposal["labels"])),
+                }
+                for proposal in proposals
+            ]
+
+    def save_alias(
+        self,
+        fingerprint: str,
+        proposal: dict[str, Any],
+        ticket_numbers: dict[int, str | None],
+        *,
+        decision: str,
+        reviewer: str,
+        rationale: str,
+    ) -> dict[str, Any]:
+        """Confirm or reject a proposed Alias; a change appends a history row.
+
+        Every decision needs a rationale, because it changes which Tickets the
+        rules compare. Saving the decision already saved changes nothing and
+        appends no history. Returns the proposal with its decision, history and
+        whether anything changed.
+        """
+        if decision not in SAVED_ALIAS_DECISIONS:
+            raise ReviewError(
+                "unknown_decision", "decision",
+                f"{decision!r} is not an Alias decision; use one of {', '.join(SAVED_ALIAS_DECISIONS)}",
+            )
+        reviewer = clean_text("reviewer", reviewer, required=True)
+        rationale = clean_text("rationale", rationale)
+        labels = (proposal["labels"][0], proposal["labels"][1])
+        # The history row names the Tickets proposing the Alias, so a drawer holding them lists it.
+        rows = sorted({row for pair in proposal["proposed_by"] for row in pair})
+        with self._lock:
+            previous = self._alias_decisions(fingerprint).get(labels)
+            changed = previous is None or previous["decision"]["id"] != decision
+            if changed and not rationale:
+                raise ReviewError(
+                    "rationale_required", "rationale",
+                    "give a reason for this Alias decision; it changes which tickets the rules compare",
+                )
+            if changed:
+                recorded_at = _now()
+                with self._transaction():
+                    self.connection.execute(
+                        "INSERT OR REPLACE INTO alias_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        [fingerprint, *labels, decision, reviewer, recorded_at, rationale],
+                    )
+                    self._append_history(
+                        fingerprint, "alias", rows, [ticket_numbers.get(row) for row in rows], reviewer, recorded_at,
+                        None if previous is None else {"labels": list(labels), "decision": previous["decision"]},
+                        {"labels": list(labels), "decision": alias_decision_label(decision)},
+                        rationale, labels,
+                    )
+        [record] = self.aliases(fingerprint, [proposal])
+        return {**record, "changed": changed}
+
     # History
 
-    def _history(self, fingerprint: str, kind: str | None = None, excel_rows: list[int] | None = None) -> list[dict[str, Any]]:
-        """History rows, newest first: the Snapshot's, or one subject's when kind and excel_rows are given."""
+    def _history(
+        self,
+        fingerprint: str,
+        kind: str | None = None,
+        excel_rows: list[int] | None = None,
+        labels: tuple[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """History rows, newest first: the Snapshot's, or one subject's when kind and its rows or labels are given."""
         query = (
-            "SELECT entry, kind, excel_rows, ticket_numbers, reviewer, recorded_at, previous_value, new_value, rationale"
-            " FROM review_history WHERE snapshot_fingerprint = ?"
+            "SELECT entry, kind, excel_rows, ticket_numbers, reviewer, recorded_at, previous_value, new_value, rationale,"
+            " employee_labels FROM review_history WHERE snapshot_fingerprint = ?"
         )
         parameters: list[Any] = [fingerprint]
-        if kind is not None:
+        if kind is not None and labels is not None:
+            query += " AND kind = ? AND employee_labels = ?"
+            parameters += [kind, list(labels)]
+        elif kind is not None:
             query += " AND kind = ? AND excel_rows = ?"
             parameters += [kind, excel_rows]
         rows = self.connection.execute(query + " ORDER BY entry DESC", parameters).fetchall()
@@ -419,6 +565,7 @@ class ReviewStore:
                 "previous": json.loads(row[6]) if row[6] is not None else None,
                 "new": json.loads(row[7]) if row[7] is not None else None,
                 "rationale": row[8],
+                **({"employee_labels": list(row[9])} if row[9] is not None else {}),
             }
             for row in rows
         ]
@@ -434,36 +581,48 @@ class ReviewStore:
         previous: dict[str, Any] | None,
         new: dict[str, Any] | None,
         rationale: str,
+        labels: tuple[str, str] | None = None,
     ) -> None:
         self.connection.execute(
             "INSERT INTO review_history (snapshot_fingerprint, kind, excel_rows, ticket_numbers, reviewer, recorded_at,"
-            " previous_value, new_value, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " previous_value, new_value, rationale, employee_labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 fingerprint, kind, excel_rows, ticket_numbers, reviewer, recorded_at,
                 None if previous is None else json.dumps(previous),
                 None if new is None else json.dumps(new),
                 rationale,
+                None if labels is None else list(labels),
             ],
         )
 
     # What the drawer and the ranked list read
 
     def for_possible_duplicate(
-        self, fingerprint: str, pairs: list[dict[str, Any]], member_rows: list[int]
+        self,
+        fingerprint: str,
+        pairs: list[dict[str, Any]],
+        member_rows: list[int],
+        proposals: Iterable[dict[str, Any]] = (),
     ) -> dict[str, Any]:
         """The review block of a possible duplicate's evidence.
 
         `pairs` are its Candidate pairs (excel_rows lower first, ticket
         numbers and rule IDs); each shows its saved outcome or Not reviewed.
-        Links and history are those touching any member Ticket.
+        `proposals` are the Aliases about its members' labels, each shown with
+        its decision. Links and history are those touching any member Ticket,
+        plus the history of those Aliases.
         """
         with self._lock:
             saved = self._outcomes(fingerprint, [tuple(pair["excel_rows"]) for pair in pairs])
             links = self._links(fingerprint, member_rows)
             history = self._history(fingerprint)
+            aliases = self.aliases(fingerprint, proposals)
         members = set(member_rows)
+        alias_labels = {tuple(alias["labels"]) for alias in aliases}
         return {
             "outcome_values": [value.payload() for value in OUTCOME_VALUES],
+            "alias_decision_values": [value.payload() for value in ALIAS_DECISION_VALUES],
+            "aliases": aliases,
             "pairs": [
                 {
                     **(saved.get(tuple(pair["excel_rows"])) or _unsaved(*pair["excel_rows"], pair["ticket_numbers"])),
@@ -472,7 +631,10 @@ class ReviewStore:
                 for pair in pairs
             ],
             "links": links,
-            "history": [entry for entry in history if members & set(entry["excel_rows"])],
+            "history": [
+                entry for entry in history
+                if members & set(entry["excel_rows"]) or tuple(entry.get("employee_labels", ())) in alias_labels
+            ],
         }
 
     def summary(self, fingerprint: str) -> dict[str, Any]:
@@ -481,15 +643,26 @@ class ReviewStore:
             outcomes = list(self._outcomes(fingerprint, None).values())
             links = self._links(fingerprint)
             history = self._history(fingerprint)
+            aliases = [{"labels": list(key), **record} for key, record in self._alias_decisions(fingerprint).items()]
         return {
             "outcome_values": [value.payload() for value in OUTCOME_VALUES],
             "outcomes": outcomes,
+            # Saved Alias decisions; a proposal nobody decided is not listed here (see the aliases request).
+            "aliases": aliases,
             "links": links,
             # The only Tickets an adjusted figure may leave out: those an explicit link marks as replaced.
             "replaced_tickets": sorted({link["replaced_row"] for link in links}),
             "history": history,
             "store": {"path": str(self.path.resolve()), "file": REVIEW_FILE_NAME},
         }
+
+
+def alias_decision_label(decision_id: str) -> dict[str, str]:
+    return {"id": decision_id, "label": ALIAS_DECISIONS[decision_id].label}
+
+
+def _undecided() -> dict[str, Any]:
+    return {"decision": alias_decision_label(PROPOSED.id), "reviewer": None, "recorded_at": None, "rationale": "", "saved": False}
 
 
 def _unsaved(first_row: int, second_row: int, ticket_numbers: list[str | None]) -> dict[str, Any]:

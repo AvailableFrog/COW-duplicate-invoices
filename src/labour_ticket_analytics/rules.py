@@ -5,6 +5,12 @@ Candidate between two Tickets, carrying the rule, the fields compared, the
 strength of the matching evidence and a reason in words. Strength describes
 the evidence, never whether anyone was paid or acted deliberately.
 
+Rules only compare Tickets inside one search space: the same Date and employee
+labels that are equal, differ only in spacing and case, or are joined by a
+reviewer-confirmed Alias. Each rule says which of those it accepts; a label
+pair differing only in spacing is compared by the Name-space variant alone,
+which proposes an Alias and never merges the labels.
+
 Possible Duplicates are the connected components of Candidate edges within one
 employee-and-date context, recomposed from the Candidates every time they are
 read. Their display identifier is derived from the sorted member ticket
@@ -19,13 +25,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from itertools import combinations
-from typing import Any
+from typing import Any, Iterable
 
 import duckdb
 
 from labour_ticket_analytics.timeparse import TimeParse, compare
 
-RULE_VERSION = "1.1.0"
+RULE_VERSION = "1.2.0"
 
 # The Strict repeat key: source field -> normalized column. Never ID, Ticket
 # Number, timestamps, supervisor or description, which can differ between
@@ -50,6 +56,8 @@ class Rule:
     evidence_strength: str
     fields_compared: tuple[str, ...]
     reason: str
+    # Whether a confirmed Alias widens this rule's employee key (PRD section 5: "same employee or confirmed alias").
+    accepts_alias: bool = False
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -59,6 +67,7 @@ class Rule:
             "evidence_strength": self.evidence_strength,
             "fields_compared": list(self.fields_compared),
             "reason": self.reason,
+            "accepts_alias": self.accepts_alias,
         }
 
 
@@ -81,6 +90,20 @@ TIME_TEXT_VARIANT = Rule(
         " and the Time text differs only in spacing, case or punctuation, or reads as the same work periods."
     ),
 )
+# Compares the four claim components with Date, Job Number and Time like the Strict repeat, and the
+# Employee with every space removed and case-folded. Email is never read: a shared email is no reason.
+NAME_SPACE_VARIANT = Rule(
+    id="name_space_variant",
+    label="Name-space variant",
+    pattern="Same claim looks different as text",
+    evidence_strength="moderate",
+    fields_compared=tuple(STRICT_KEY),
+    reason=(
+        "Same claim under two spellings of a name: the employee names are equal once spaces and case are ignored,"
+        " and date, job, time and all four hour and pay amounts match. This proposes an Alias for a reviewer to"
+        " confirm or reject; until then the two labels stay separate."
+    ),
+)
 WORK_PERIOD_CONFLICT = Rule(
     id="work_period_conflict",
     label="Work-period conflict",
@@ -91,6 +114,7 @@ WORK_PERIOD_CONFLICT = Rule(
         "Times overlap: work periods read without any assumption intersect on the same day. On its own an overlap"
         " is a conflicting work claim, not proof of a repeated whole ticket."
     ),
+    accepts_alias=True,
 )
 # Pattern 4 retains ambiguous equal-duration cases for review (B). When the assumed reading would
 # overlap, as in J, the Candidate is labelled pattern 3 instead, so no label suggests separate work.
@@ -107,7 +131,8 @@ AMBIGUOUS_PERIOD_COMPARISON = Rule(
 )
 
 RULES: dict[str, Rule] = {
-    rule.id: rule for rule in (STRICT_REPEAT, TIME_TEXT_VARIANT, WORK_PERIOD_CONFLICT, AMBIGUOUS_PERIOD_COMPARISON)
+    rule.id: rule
+    for rule in (STRICT_REPEAT, TIME_TEXT_VARIANT, NAME_SPACE_VARIANT, WORK_PERIOD_CONFLICT, AMBIGUOUS_PERIOD_COMPARISON)
 }
 
 # A Ticket taking part in at least one Candidate; `t` is a ticket_values row.
@@ -150,17 +175,57 @@ class PairTicket:
     excel_row: int
     values: dict[str, Any]  # source field -> normalized value (None when blank or invalid), for every STRICT_KEY field
     time: TimeParse
+    name: str | None = None  # the Employee as written, for reasons in words; never compared
 
-    @property
-    def search_key(self) -> tuple[Any, Any] | None:
-        """The employee-and-date search space this Ticket falls in; None when either is unusable.
 
-        Same normalized employee label and same Date as recorded. Confirmed
-        Aliases (ticket #10) widen this to every label of one Alias, here and
-        nowhere else, so every rule inherits them.
-        """
-        employee, date = self.values["Employee"], self.values["Date"]
-        return None if employee is None or date is None else (employee, date)
+def alias_key(first_label: str, second_label: str) -> tuple[str, str]:
+    """The unordered pair of normalized employee labels an Alias is about, in sorted order."""
+    return (first_label, second_label) if first_label <= second_label else (second_label, first_label)
+
+
+class Aliases:
+    """The reviewer-confirmed Aliases of one Snapshot: pairs of employee labels said to name one person.
+
+    An Alias joins exactly the two labels a reviewer confirmed; nothing is
+    joined transitively, so no label is ever tied to another that no reviewer
+    looked at. Only rules that accept an Alias read it.
+    """
+
+    def __init__(self, pairs: Iterable[tuple[str, str]] = ()) -> None:
+        self.pairs = frozenset(alias_key(*pair) for pair in pairs)
+
+    def joins(self, first_label: str, second_label: str) -> bool:
+        return first_label != second_label and alias_key(first_label, second_label) in self.pairs
+
+
+NO_ALIASES = Aliases()
+
+
+def spaceless(label: str) -> str:
+    """A normalized employee label with every whitespace character removed: what the Name-space variant compares."""
+    return "".join(label.split())
+
+
+def employee_relation(first: PairTicket, second: PairTicket, aliases: Aliases) -> str:
+    """How two Tickets' employee labels relate: the employee half of the search space.
+
+    `same_label`, `confirmed_alias` (two labels a reviewer joined),
+    `spacing_differs` (equal once every space is removed, a proposal only),
+    `different`, or `unusable` when either label is blank.
+    """
+    a, b = first.values["Employee"], second.values["Employee"]
+    if a is None or b is None:
+        return "unusable"
+    if a == b:
+        return "same_label"
+    if aliases.joins(a, b):
+        return "confirmed_alias"
+    return "spacing_differs" if spaceless(a) == spaceless(b) else "different"
+
+
+# The relations a rule that accepts a confirmed Alias compares; every other rule except the
+# Name-space variant compares one label only.
+ONE_EMPLOYEE = ("same_label", "confirmed_alias")
 
 
 @dataclass(frozen=True)
@@ -209,57 +274,77 @@ def pair_tickets(
     connection: duckdb.DuckDBPyConnection, fingerprint: str, parses: dict[int, TimeParse], rows: list[int] | None = None,
 ) -> dict[int, PairTicket]:
     """The comparable values of a Snapshot's Tickets (or only `rows`), by Excel row."""
-    query = f"SELECT excel_row, {', '.join(STRICT_KEY.values())} FROM ticket_values WHERE snapshot_fingerprint = $fingerprint"
+    query = (
+        f"SELECT excel_row, employee_name, {', '.join(STRICT_KEY.values())} FROM ticket_values"
+        " WHERE snapshot_fingerprint = $fingerprint"
+    )
     parameters: dict[str, Any] = {"fingerprint": fingerprint}
     if rows is not None:
         query += " AND list_contains($rows, excel_row)"
         parameters["rows"] = rows
     return {
-        row[0]: PairTicket(row[0], dict(zip(STRICT_KEY, row[1:])), parses[row[0]])
+        row[0]: PairTicket(row[0], dict(zip(STRICT_KEY, row[2:])), parses[row[0]], row[1])
         for row in connection.execute(query + " ORDER BY excel_row", parameters).fetchall()
     }
 
 
-def in_search_space(first: PairTicket, second: PairTicket) -> bool:
-    """Same employee and Date: where rules look. A search space, never a rule, so it links nothing by itself."""
-    return first.search_key is not None and first.search_key == second.search_key
+def in_search_space(first: PairTicket, second: PairTicket, aliases: Aliases = NO_ALIASES) -> bool:
+    """Where rules look: the same Date as recorded, and employee labels that are equal, differ only in spacing,
+    or are joined by a confirmed Alias. A search space, never a rule, so it links nothing by itself.
+
+    This is the one place the search space is defined; each rule then says
+    which employee relation it accepts.
+    """
+    date = first.values["Date"]
+    return (
+        date is not None and date == second.values["Date"]
+        and employee_relation(first, second, aliases) in ("same_label", "confirmed_alias", "spacing_differs")
+    )
 
 
-def verdicts(first: PairTicket, second: PairTicket) -> list[Verdict]:
+def verdicts(first: PairTicket, second: PairTicket, aliases: Aliases = NO_ALIASES) -> list[Verdict]:
     """Every rule's verdict on a pair inside the search space, in RULES order; `first` is the lower Excel row.
 
-    When the whole claim repeats (a Strict repeat or Time-text variant), the
-    pair's overlap is part of that repeat, so its Work-period conflict takes
-    the repeat's pattern and adds no "Possible correction or resubmission".
+    When the whole claim repeats (a Strict repeat, Time-text variant or
+    Name-space variant), the pair's overlap is part of that repeat, so its
+    Work-period conflict takes the repeat's pattern and adds no "Possible
+    correction or resubmission".
     """
-    strict, variant, conflict, ambiguous = (
+    relation = employee_relation(first, second, aliases)
+    strict, variant, name, conflict, ambiguous = (
         _strict_repeat(first, second),
-        _time_text_variant(first, second),
-        _work_period_conflict(first, second),
-        _ambiguous_period_comparison(first, second),
+        _time_text_variant(first, second, relation),
+        _name_space_variant(first, second),
+        _work_period_conflict(first, second, relation),
+        _ambiguous_period_comparison(first, second, relation),
     )
-    repeat = next((verdict for verdict in (strict, variant) if verdict.matched), None)
+    repeat = next((verdict for verdict in (strict, variant, name) if verdict.matched), None)
     if conflict.matched and repeat is not None:
         conflict = replace(conflict, pattern=repeat.rule.pattern)
-    return [strict, variant, conflict, ambiguous]
+    return [strict, variant, name, conflict, ambiguous]
 
 
-def explain(first: PairTicket, second: PairTicket) -> dict[str, Any]:
+def explain(first: PairTicket, second: PairTicket, aliases: Aliases = NO_ALIASES) -> dict[str, Any]:
     """Why two Tickets are or are not linked: every rule's verdict and a summary in words.
 
     Outside the employee-and-date search space no rule compares them. Inside
     it, equal hours alone never link two Tickets, and a pair no rule links is
     explained by how its work periods compare.
     """
-    if not in_search_space(first, second):
-        reason = "Not compared: the rules only compare tickets with the same employee and Date."
+    relation = employee_relation(first, second, aliases)
+    if not in_search_space(first, second, aliases):
+        reason = (
+            "Not compared: the rules only compare tickets on the same Date whose employee labels are the same,"
+            " differ only in spacing and case, or are joined by a confirmed Alias."
+        )
         return {
             "same_employee_and_date": False,
+            "employee_relation": relation,
             "linked": False,
             "rules": [Verdict(rule, False, reason).payload() for rule in RULES.values()],
             "summary": reason,
         }
-    found = verdicts(first, second)
+    found = verdicts(first, second, aliases)
     matched = [verdict for verdict in found if verdict.matched]
     if matched:
         summary = "Linked by " + _listed([verdict.rule.label for verdict in matched]) + ". " + " ".join(
@@ -272,26 +357,37 @@ def explain(first: PairTicket, second: PairTicket) -> dict[str, Any]:
             summary += " Their hours and pay are equal, but equal hours on the same day never link tickets on their own."
     return {
         "same_employee_and_date": True,
+        "employee_relation": relation,
         "linked": bool(matched),
         "rules": [verdict.payload() for verdict in found],
         "summary": summary,
     }
 
 
-def record_candidates(connection: duckdb.DuckDBPyConnection, fingerprint: str, parses: dict[int, TimeParse]) -> None:
-    """Run every rule over each Ticket pair in the employee-and-date search space and store one Candidate
-    per rule per matching pair, with its evidence. A pair several rules match keeps every rule's reason."""
-    spaces: dict[tuple[Any, Any], list[PairTicket]] = {}
+def find_candidates(
+    connection: duckdb.DuckDBPyConnection, fingerprint: str, parses: dict[int, TimeParse], aliases: Aliases = NO_ALIASES,
+) -> list[Candidate]:
+    """Run every rule over each Ticket pair in the employee-and-date search space: one Candidate per rule per
+    matching pair, with its evidence. A pair several rules match keeps every rule's reason."""
+    by_date: dict[Any, list[PairTicket]] = {}
     for ticket in pair_tickets(connection, fingerprint, parses).values():
-        if ticket.search_key is not None:
-            spaces.setdefault(ticket.search_key, []).append(ticket)
-    found = [
+        if ticket.values["Date"] is not None:
+            by_date.setdefault(ticket.values["Date"], []).append(ticket)
+    return [
         verdict.candidate(first, second)
-        for tickets in spaces.values()
+        for tickets in by_date.values()
         for first, second in combinations(tickets, 2)  # in Excel-row order, so first is the lower row
-        for verdict in verdicts(first, second)
+        if in_search_space(first, second, aliases)
+        for verdict in verdicts(first, second, aliases)
         if verdict.matched
     ]
+
+
+def record_candidates(
+    connection: duckdb.DuckDBPyConnection, fingerprint: str, parses: dict[int, TimeParse], aliases: Aliases = NO_ALIASES,
+) -> list[Candidate]:
+    """Find the Snapshot's Candidates under the given confirmed Aliases and store them; returns what was stored."""
+    found = find_candidates(connection, fingerprint, parses, aliases)
     if found:
         connection.executemany(
             "INSERT INTO candidates (snapshot_fingerprint, rule_id, first_row, second_row, fields_compared,"
@@ -304,6 +400,7 @@ def record_candidates(connection: duckdb.DuckDBPyConnection, fingerprint: str, p
                 for c in found
             ],
         )
+    return found
 
 
 def _strict_repeat(first: PairTicket, second: PairTicket) -> Verdict:
@@ -314,10 +411,12 @@ def _strict_repeat(first: PairTicket, second: PairTicket) -> Verdict:
     return Verdict(rule, True, rule.reason)
 
 
-def _time_text_variant(first: PairTicket, second: PairTicket) -> Verdict:
+def _time_text_variant(first: PairTicket, second: PairTicket, relation: str) -> Verdict:
     """Same claim, Time differing as text but equivalent: same Confident Intervals, or the same time tokens."""
     rule = TIME_TEXT_VARIANT
-    problem = _unequal(first, second, ("Job Number", *CLAIM_FIELDS)) or _same_time_text(first, second)
+    problem = (
+        _one_label(relation) or _unequal(first, second, ("Job Number", *CLAIM_FIELDS)) or _same_time_text(first, second)
+    )
     if problem:
         return Verdict(rule, False, f"Not a time-text variant: {problem}.")
     differences = _token_differences(first.time, second.time)
@@ -339,18 +438,55 @@ def _time_text_variant(first: PairTicket, second: PairTicket) -> Verdict:
     return Verdict(rule, True, "Same claim with the time written differently: " + ", and ".join(conditions) + ".")
 
 
-def _work_period_conflict(first: PairTicket, second: PairTicket) -> Verdict:
-    """Confident Intervals intersect on the same day; jobs and claim components may differ."""
+def _name_space_variant(first: PairTicket, second: PairTicket) -> Verdict:
+    """Two employee labels equal once every space is removed, with the whole claim otherwise equal.
+
+    It proposes an Alias and is a Candidate itself; it never merges the
+    labels, and it reads the same whether the Alias is proposed, confirmed or
+    rejected. Email is never compared.
+    """
+    rule = NAME_SPACE_VARIANT
+    a, b = first.values["Employee"], second.values["Employee"]
+    if a is None or b is None:
+        problem = "Employee is blank or unusable on a ticket"
+    elif a == b:
+        problem = "the employee labels are the same, so there is no name variation to propose"
+    elif spaceless(a) != spaceless(b):
+        problem = "the employee names differ beyond spacing and case"
+    else:
+        problem = _unequal(first, second, ("Date", "Job Number", "Time", *CLAIM_FIELDS))
+    if problem:
+        return Verdict(rule, False, f"Not a name-space variant: {problem}.")
+    return Verdict(
+        rule, True,
+        f"Same claim under two spellings of a name: “{first.name}” and “{second.name}” are equal once spaces and case"
+        " are ignored, and date, job, time and all four hour and pay amounts match. This proposes an Alias for a"
+        " reviewer to confirm or reject; until then they stay two employee labels.",
+    )
+
+
+def _work_period_conflict(first: PairTicket, second: PairTicket, relation: str) -> Verdict:
+    """Confident Intervals intersect on the same day; jobs and claim components may differ.
+
+    One employee label, or two joined by a confirmed Alias.
+    """
     rule = WORK_PERIOD_CONFLICT
+    if relation not in ONE_EMPLOYEE:
+        return Verdict(
+            rule, False,
+            "Not compared for overlap: the employee labels differ and no confirmed Alias joins them.",
+        )
     comparison = compare(first.time, second.time)
     result = comparison["result"]
     if result == "overlap":
         jobs = _job_phrase(first, second)
+        alias = f" under the confirmed Alias “{first.name}” / “{second.name}”" if relation == "confirmed_alias" else ""
         shared = _spans(comparison["intersection"])
         return Verdict(
             rule, True,
-            f"Times overlap{jobs}: the Confident Intervals share {shared} ({_duration(comparison['overlap_minutes'])}),"
-            " a conflicting work claim rather than proof of a repeated whole ticket.",
+            f"Times overlap{jobs}{alias}: the Confident Intervals share {shared}"
+            f" ({_duration(comparison['overlap_minutes'])}), a conflicting work claim rather than proof of a repeated"
+            " whole ticket.",
         )
     if result == "separate":
         return Verdict(
@@ -367,10 +503,12 @@ def _work_period_conflict(first: PairTicket, second: PairTicket) -> Verdict:
     return Verdict(rule, False, "The times cannot be compared: a ticket has no readable, unflagged work period.")
 
 
-def _ambiguous_period_comparison(first: PairTicket, second: PairTicket) -> Verdict:
+def _ambiguous_period_comparison(first: PairTicket, second: PairTicket, relation: str) -> Verdict:
     """Same nonzero job and claim, distinct Time text whose comparison stays unresolved without AM/PM."""
     rule = AMBIGUOUS_PERIOD_COMPARISON
-    problem = _unequal(first, second, ("Job Number", *CLAIM_FIELDS)) or _same_time_text(first, second)
+    problem = (
+        _one_label(relation) or _unequal(first, second, ("Job Number", *CLAIM_FIELDS)) or _same_time_text(first, second)
+    )
     if not problem and first.values["Job Number"] == 0:
         problem = "the Job Number is 0, and this comparison needs the same nonzero job"
     if problem:
@@ -394,6 +532,13 @@ def _ambiguous_period_comparison(first: PairTicket, second: PairTicket) -> Verdi
         f" periods overlap cannot be established and the times need review. {reading}",
         WORK_PERIOD_CONFLICT.pattern if assumed else None,
     )
+
+
+def _one_label(relation: str) -> str | None:
+    """Why a rule that compares one employee label does not apply, or None when the labels are the same."""
+    if relation == "same_label":
+        return None
+    return "the employee labels differ, and this rule compares one label only (an Alias does not widen it)"
 
 
 def _unequal(first: PairTicket, second: PairTicket, fields: tuple[str, ...]) -> str | None:
@@ -554,8 +699,8 @@ def ranked(possible_duplicates: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def compose(candidates: list[Candidate]) -> list[list[Candidate]]:
     """Group Candidates into connected components; each component's Candidates in a stable order.
 
-    Every rule only links Tickets of one employee and date, so a component
-    stays within one employee-and-date context.
+    Every rule only links Tickets inside one employee-and-date search space,
+    so a component stays within one such context.
     """
     parent: dict[int, int] = {}
 
@@ -619,7 +764,8 @@ def _summary(members: list[dict[str, Any]], candidates: list[Candidate]) -> str:
     any Ticket is surplus.
     """
     first = members[0]
-    context = f"{first['employee'] or 'No employee'}, Date {first['date'] or 'not usable'}"
+    names = _listed(list(dict.fromkeys(member["employee"] or "No employee" for member in members)))
+    context = f"{names}, Date {first['date'] or 'not usable'}"
     jobs = {member["job_number"] for member in members}
     if len(jobs) == 1 and first["job_number"] is not None:
         context += f", Job {first['job_number']}"
