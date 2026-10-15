@@ -1151,3 +1151,169 @@ summary:focus-visible {
 .queue-drill p {
   margin: 4px 0 8px;
 }
+
+/* Value context: a small disclosure at the foot of the Overview, collapsed by default so money is never the headline. */
+.value-context {
+  margin-top: 28px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.value-context > details > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.value-context > details > summary::before {
+  content: "▸";
+  color: var(--muted);
+  align-self: center;
+}
+
+.value-context > details[open] > summary::before {
+  content: "▾";
+}
+
+.value-context > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.value-context > details > summary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.value-context h3 {
+  display: inline;
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.value-summary-note {
+  font-size: 0.9rem;
+}
+
+.value-note,
+.value-unpriced,
+.value-reviewed-none {
+  max-width: 100ch;
+  font-size: 0.9rem;
+  margin: 6px 0;
+}
+
+.value-unpriced.unresolved {
+  padding: 8px 12px;
+  border-left: 3px solid var(--unresolved);
+  background: var(--unresolved-wash);
+  color: var(--ink);
+}
+
+.value-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.value-figure {
+  min-width: 0;
+  padding: 14px 16px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.value-scenario {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.value-figure h4 {
+  margin: 2px 0 0;
+  font-size: 1rem;
+}
+
+.value-amount {
+  margin: 4px 0 8px;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.value-facts {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.value-facts div + div {
+  margin-top: 6px;
+}
+
+.value-facts dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.value-facts dd {
+  margin: 0;
+}
+
+.value-groups {
+  margin-top: 16px;
+}
+
+.value-groups h4 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
+
+.value-groups .table-scroll {
+  max-width: 1000px;
+}
+
+.value-groups table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.value-groups th,
+.value-groups td {
+  text-align: left;
+  vertical-align: top;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.value-groups thead th {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.value-groups tbody th {
+  font-weight: 600;
+}
+
+.value-groups .numeric {
+  text-align: right;
+}
+
+.value-reviewed {
+  margin-top: 16px;
+  max-width: 640px;
+}
+
+.value-reviewed .value-figure {
+  border: 2px dashed var(--accent);
+}

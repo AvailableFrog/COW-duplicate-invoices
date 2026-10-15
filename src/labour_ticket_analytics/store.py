@@ -363,11 +363,25 @@ class SnapshotStore:
         as_of: dt.date,
         group_by: str | None = None,
         include_rows: bool = False,
+        replaced_rows: list[int] | tuple[int, ...] = (),
     ) -> dict[str, Any]:
         with self._lock:
             return metrics.evaluate(
-                self.connection, fingerprint, self.fields(fingerprint), metric, filters, as_of, group_by, include_rows
+                self.connection, fingerprint, self.fields(fingerprint), metric, filters, as_of, group_by, include_rows,
+                replaced_rows,
             )
+
+    def status_counts(self, fingerprint: str, excel_rows: list[int]) -> list[dict[str, Any]]:
+        """How many of the given Tickets carry each Approval Status, most first; an unreadable status counts as null."""
+        if not excel_rows:
+            return []
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT status, count(*) FROM ticket_values WHERE snapshot_fingerprint = ? AND list_contains(?, excel_row)"
+                " GROUP BY status ORDER BY count(*) DESC, status NULLS LAST",
+                [fingerprint, list(excel_rows)],
+            ).fetchall()
+        return [{"status": status, "tickets": count} for status, count in rows]
 
     def metric_bucket_rows(
         self, fingerprint: str, metric: metrics.Metric, filters: Filters, as_of: dt.date, bucket_id: str

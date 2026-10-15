@@ -528,6 +528,70 @@ export interface BucketTicketsResponse extends Provenance {
   rows: BucketTicket[];
 }
 
+export interface ValueCoverageItem extends CoverageItem {
+  quantity?: number | null;
+  quantity_unit?: string | null;
+}
+
+/** One exact repeat, not flagged, behind the hypothetical figure: n tickets and the n − 1 extra claims valued. */
+export interface ExtraClaimGroup {
+  excel_rows: number[];
+  ticket_numbers: (string | null)[];
+  employee: string | null;
+  tickets: number;
+  extra_claims: number;
+  ticket_values: number[];
+  value: number;
+  /** The evidence report's example letters naming its tickets, such as "C". */
+  examples: string[];
+}
+
+export type ValueScenario = "recorded" | "flagged" | "hypothetical" | "analyst_reviewed";
+
+/** One BBD figure of the value-context panel: a registry metric with its formula, interpretation and completeness. */
+export interface ValueFigure {
+  id: string;
+  metric_id: string;
+  label: string;
+  scenario: ValueScenario;
+  value: number | null;
+  currency: "BBD";
+  formula: string;
+  interpretation: string;
+  completeness: string;
+  definition: string;
+  grain: string;
+  tickets: number;
+  availability: { status: "available" | "disabled"; reason: string | null };
+  coverage: { contributing_tickets: number; excluded: ValueCoverageItem[]; partial: ValueCoverageItem[] } | null;
+  warnings: string[];
+  possible_duplicates?: ExtraClaimGroup[];
+}
+
+export interface ReviewedAlternative extends ValueFigure {
+  replaced_tickets: number[];
+  replaced_in_filter: number[];
+  left_out_value: number | null;
+}
+
+export interface ValueContextResponse extends Provenance {
+  title: string;
+  currency: "BBD";
+  note: string;
+  figures: ValueFigure[];
+  unpriced_labour: {
+    tickets: number;
+    hours: number;
+    statuses: { status: ApprovalStatus | null; tickets: number }[];
+    excel_rows: number[];
+    /** In words, such as "881 hours across 122 Pending tickets that lack a usable Rate or hour value". */
+    summary: string;
+  };
+  /** Present only when a reviewer's kept/replaced link marks a ticket replaced. */
+  reviewed_alternative: ReviewedAlternative | null;
+  filters: FilterPayload;
+}
+
 /** A refused or failed request, with its HTTP status. */
 export class ApiError extends Error {
   constructor(
@@ -630,6 +694,11 @@ export function fetchPairExplanation(
 /** The Processing queue's two age-since-submission charts under the filters. */
 export function fetchProcessingQueue(filters: FilterState, signal?: AbortSignal): Promise<ProcessingQueueResponse> {
   return getJson<ProcessingQueueResponse>(`/api/overview/processing-queue?${filterQuery(filters)}`, signal);
+}
+
+/** The value-context panel's BBD figures under the filters, with any analyst-reviewed alternative. */
+export function fetchValueContext(filters: FilterState, signal?: AbortSignal): Promise<ValueContextResponse> {
+  return getJson<ValueContextResponse>(`/api/overview/value-context?${filterQuery(filters)}`, signal);
 }
 
 /** The Tickets one bucket of a registry metric counts, under the same filters as its chart. */

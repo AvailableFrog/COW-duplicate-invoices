@@ -300,6 +300,11 @@ class ReviewStore:
             links = [pair_key(link["replaced_row"], link["retained_row"]) for link in self._links(fingerprint)]
         return {(first, second) for first, second in outcomes} | set(links)
 
+    def replaced_rows(self, fingerprint: str) -> list[int]:
+        """The Tickets an explicit kept/replaced link marks as replaced: the only ones an adjusted figure may leave out."""
+        with self._lock:
+            return sorted({link["replaced_row"] for link in self._links(fingerprint)})
+
     def save_outcome(
         self,
         fingerprint: str,

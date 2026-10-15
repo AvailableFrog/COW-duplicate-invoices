@@ -19,7 +19,7 @@ import duckdb
 from labour_ticket_analytics.filters import DATE_BASES, Filters
 from labour_ticket_analytics.rules import IN_CANDIDATE_SQL, STRICT_KEY, strict_groups_sql
 
-REGISTRY_VERSION = "1.3.0"
+REGISTRY_VERSION = "1.4.0"
 
 # Grouping dimension ID (the source column) -> normalized column.
 DIMENSIONS = {
@@ -43,11 +43,22 @@ LABOUR_VALUE_SQL = (
 LABOUR_KNOWN_SQL = f"(NOT {HOURS_UNUSABLE_SQL} AND (t.rate IS NOT NULL OR {CLAIMED_HOURS_SQL} = 0))"
 # The hours left unpriced: every usable component, so an invalid one does not hide the others.
 USABLE_HOURS_SQL = "(COALESCE(t.regular_hours, 0) + COALESCE(t.overtime, 0) + COALESCE(t.double_time, 0))"
+# One Ticket's base value (PRD section 9): known labour plus known Job Work Pay, rounded half-up to cents
+# here, per Ticket, before any summing. Unknown labour adds nothing and is disclosed as unpriced instead.
+BASE_VALUE_SQL = (
+    f"ROUND(COALESCE(CASE WHEN {LABOUR_KNOWN_SQL} THEN {LABOUR_VALUE_SQL} END, 0)"
+    " + COALESCE(CAST(t.job_work_pay AS DECIMAL(18, 4)), 0), 2)"
+)
+# The Tickets an explicit kept/replaced link marks as replaced, supplied from the local review file.
+REPLACED_BY_REVIEW_SQL = "list_contains(CAST($replaced_rows AS INTEGER[]), t.excel_row)"
 
-Aggregation = Literal["count", "count_distinct", "sum", "distribution", "possible_duplicate_count"]
+Aggregation = Literal[
+    "count", "count_distinct", "sum", "distribution", "possible_duplicate_count", "hypothetical_extra_claims",
+]
 # The statistic each aggregation reports as a metric's value.
 STATISTICS: dict[str, str] = {
-    "count": "count", "count_distinct": "distinct count", "sum": "sum", "distribution": "median", "possible_duplicate_count": "count",
+    "count": "count", "count_distinct": "distinct count", "sum": "sum", "distribution": "median",
+    "possible_duplicate_count": "count", "hypothetical_extra_claims": "sum",
 }
 
 
@@ -135,6 +146,9 @@ class Metric:
     requires_columns: tuple[str, ...] = ()
     # Value ranges a distribution can be counted by; each bucket's Tickets are listed by bucket_rows.
     buckets: tuple[Bucket, ...] = ()
+    # Whether the value depends on the local review file's kept/replaced links ($replaced_rows), not only
+    # on the Snapshot. Only such a metric is an analyst-reviewed figure.
+    reads_review_links: bool = False
 
     @property
     def statistic(self) -> str:
@@ -170,6 +184,7 @@ class Metric:
             "percentage_of": self.share_of,
             "requires_columns": list(self.requires_columns),
             "buckets": [bucket.payload() for bucket in self.buckets],
+            "reads_review_links": self.reads_review_links,
             "availability": self.availability(fields),
         }
 
@@ -199,6 +214,58 @@ def _age_metric(metric_id: str, label: str, population: str, scope: str) -> Metr
             Exclusion("created_after_as_of", "CAST(t.created AS DATE) > $as_of", "Created falls after the as-of date"),
         ),
         buckets=AGE_BUCKETS,
+    )
+
+
+def _base_value_metric(
+    metric_id: str,
+    label: str,
+    population: str,
+    scope: str = "TRUE",
+    exclusions: tuple[Exclusion, ...] = (),
+    exclusions_text: tuple[str, ...] = (),
+    reads_review_links: bool = False,
+) -> Metric:
+    """A sum of per-Ticket base values (PRD section 9) over one population, disclosing unpriced labour."""
+    return Metric(
+        id=metric_id,
+        label=label,
+        definition=(
+            f"Recorded Rate × claimed hours (Regular Hours + Overtime + Double Time, no multipliers) + Job Work Pay, "
+            f"rounded half-up to cents per Ticket and then summed, in BBD, over {population}. A partial valuation of "
+            "submissions: the export holds no payment records, so it is not an amount disbursed, avoided or owed."
+        ),
+        unit="BBD",
+        grain="Ticket",
+        aggregation="sum",
+        null_treatment=(
+            "Claimed labour on a Ticket with no usable Rate or hours is unpriced and disclosed, never valued at zero, "
+            "and no Rate is taken from another Ticket; its Job Work Pay still counts. A Ticket with no known component "
+            "is left out and reported."
+        ),
+        exclusions_text=(*exclusions_text, "Tickets with neither priceable labour nor a usable Job Work Pay"),
+        lineage="Each contributing Ticket's Rate, hour and Job Work Pay cells.",
+        scope=scope,
+        value=BASE_VALUE_SQL,
+        exclusions=(
+            *exclusions,
+            Exclusion(
+                "no_known_component",
+                f"NOT {LABOUR_KNOWN_SQL} AND t.job_work_pay IS NULL",
+                "neither labour nor Job Work Pay can be valued",
+            ),
+        ),
+        partials=(
+            Partial(
+                "unpriced_labour",
+                f"NOT {LABOUR_KNOWN_SQL}",
+                "labour is unpriced because Rate or an hour component is missing or invalid",
+                quantity=USABLE_HOURS_SQL,
+                quantity_unit="hours",
+            ),
+        ),
+        requires_columns=("Rate",),
+        reads_review_links=reads_review_links,
     )
 
 
@@ -390,43 +457,55 @@ REGISTRY: tuple[Metric, ...] = (
         ),
         requires_columns=("Date Approved",),
     ),
+    _base_value_metric(
+        "known_base_value_bbd",
+        "Known base-value components",
+        "every Ticket under the filters, Rejected ones included",
+    ),
+    _base_value_metric(
+        "flagged_duplicate_base_value_bbd",
+        "Base value of flagged duplicates",
+        "the flagged duplicates (Approval Status Approved and Job Number 0), the Tickets flagged_duplicate_count counts",
+        scope=FLAGGED_DUPLICATE_SCOPE,
+        exclusions_text=("Tickets that are not flagged duplicates",),
+    ),
     Metric(
-        id="known_base_value_bbd",
-        label="Known base-value components",
+        id="unflagged_exact_repeat_extra_claim_bbd",
+        label="One extra claim per exact repeat, not flagged (hypothetical)",
         definition=(
-            "Recorded Rate × claimed hours + Job Work Pay, rounded half-up to cents per Ticket and then summed, "
-            "in BBD. A partial valuation of submissions: not an amount paid, saved or owed."
+            "For each possible duplicate unflagged_exact_repeat_count counts (a Strict repeat group with no flagged "
+            "duplicate and every Ticket Approved and Keyed), the base value of n - 1 of its n Tickets, in BBD: the "
+            "group's per-Ticket base values (Rate × claimed hours + Job Work Pay, each rounded half-up to cents) summed, "
+            "less the highest one, which is taken as the claim kept. Summed over those possible duplicates. A "
+            "hypothetical count of redundant whole claims, valid only for strict groups and never for overlapping or "
+            "partly matching tickets; it is not a confirmed excess, and the export holds no payment records."
         ),
         unit="BBD",
-        grain="Ticket",
-        aggregation="sum",
+        grain="Possible duplicate",
+        aggregation="hypothetical_extra_claims",
         null_treatment=(
-            "Claimed labour on a Ticket with no usable Rate or hours is unpriced and disclosed, never valued at zero; "
-            "its Job Work Pay still counts. A Ticket with no known component is left out and reported."
+            "A possible duplicate with a Ticket whose labour is unpriced (no usable Rate) is left out and reported, "
+            "never valued at zero and never given another Ticket's Rate."
         ),
-        exclusions_text=("Tickets with neither priceable labour nor a usable Job Work Pay",),
-        lineage="Each contributing Ticket's Rate, hour and Job Work Pay cells.",
-        value=(
-            f"ROUND(COALESCE(CASE WHEN {LABOUR_KNOWN_SQL} THEN {LABOUR_VALUE_SQL} END, 0)"
-            " + COALESCE(CAST(t.job_work_pay AS DECIMAL(18, 4)), 0), 2)"
+        exclusions_text=(
+            "Possible duplicates holding a flagged duplicate",
+            "Possible duplicates with any Ticket not Approved and Keyed",
+            "Possible duplicates with a Ticket whose labour is unpriced, which are reported",
+            "Tickets with a missing or invalid comparison field, which are reported",
         ),
-        exclusions=(
-            Exclusion(
-                "no_known_component",
-                f"NOT {LABOUR_KNOWN_SQL} AND t.job_work_pay IS NULL",
-                "neither labour nor Job Work Pay can be valued",
-            ),
-        ),
-        partials=(
-            Partial(
-                "unpriced_labour",
-                f"NOT {LABOUR_KNOWN_SQL}",
-                "labour is unpriced because Rate or an hour component is missing or invalid",
-                quantity=USABLE_HOURS_SQL,
-                quantity_unit="hours",
-            ),
-        ),
+        lineage="Each possible duplicate lists its member Tickets by Excel row with each one's base value.",
+        allowed_dimensions=(),
         requires_columns=("Rate",),
+    ),
+    _base_value_metric(
+        "reviewed_known_base_value_bbd",
+        "Analyst-reviewed known base-value components",
+        "every Ticket under the filters except those a reviewer's kept/replaced link marks as replaced",
+        exclusions=(
+            Exclusion("replaced_by_review", REPLACED_BY_REVIEW_SQL, "a reviewer linked it as replaced by a kept ticket"),
+        ),
+        exclusions_text=("Tickets an explicit kept/replaced link marks as replaced; a Review Outcome or note alone never does",),
+        reads_review_links=True,
     ),
 )
 
@@ -459,8 +538,13 @@ def evaluate(
     as_of: dt.date,
     group_by: str | None = None,
     include_rows: bool = False,
+    replaced_rows: list[int] | tuple[int, ...] = (),
 ) -> dict[str, Any]:
-    """One metric's value under the filters, with its coverage, warnings and (optionally) source rows."""
+    """One metric's value under the filters, with its coverage, warnings and (optionally) source rows.
+
+    `replaced_rows` are the Tickets the local review file's kept/replaced links
+    mark as replaced; only a metric that `reads_review_links` uses them.
+    """
     if group_by is not None:
         if group_by not in metric.allowed_dimensions:
             raise MetricError(
@@ -495,8 +579,11 @@ def evaluate(
     if metric.aggregation == "possible_duplicate_count":
         result.update(_unflagged_exact_repeats(connection, fingerprint, filters, include_rows))
         return result
+    if metric.aggregation == "hypothetical_extra_claims":
+        result.update(_extra_claims(connection, fingerprint, filters, include_rows))
+        return result
 
-    scoped_sql, parameters = _scoped(metric, fingerprint, filters, as_of, group_by)
+    scoped_sql, parameters = _scoped(metric, fingerprint, filters, as_of, group_by, replaced_rows)
     totals = _aggregate(connection, metric, scoped_sql, parameters, grouped=False)
     total = totals[0] if totals else _empty_aggregate(metric)
     result["value"] = total["value"]
@@ -601,37 +688,13 @@ def _unflagged_exact_repeats(
     A group counts when any member is inside the filters, and then all its
     members are listed, so a comparison is never truncated by a filter.
     """
-    filter_sql, parameters = filters.sql("t")
-    parameters = {**parameters, "fingerprint": fingerprint}
+    exact_repeats_sql, parameters = _unflagged_exact_repeat_members(fingerprint, filters)
     possible_duplicates, tickets, rows = connection.execute(
-        f"""WITH strict AS ({strict_groups_sql()}), members AS (
-            SELECT s.strict_group, t.excel_row, t.status, t.keyed,
-                COALESCE({FLAGGED_DUPLICATE_SCOPE}, false) AS flagged, COALESCE({filter_sql}, false) AS in_filter
-            FROM strict s JOIN ticket_values t ON t.snapshot_fingerprint = $fingerprint AND t.excel_row = s.excel_row
-        ), qualifying AS (
-            SELECT strict_group FROM members GROUP BY strict_group
-            HAVING bool_and(COALESCE(status = 'Approved' AND keyed, false)) AND NOT bool_or(flagged) AND bool_or(in_filter)
-        )
-        SELECT count(DISTINCT strict_group), count(*), list(excel_row ORDER BY excel_row)
-        FROM members WHERE strict_group IN (SELECT strict_group FROM qualifying)""",
+        f"""{exact_repeats_sql} SELECT count(DISTINCT strict_group), count(*), list(excel_row ORDER BY excel_row)
+        FROM exact_repeats""",
         parameters,
     ).fetchone()
-    incomplete = " OR ".join(f"t.{column} IS NULL" for column in STRICT_KEY.values())
-    uncompared, uncompared_rows = connection.execute(
-        "SELECT count(*), list(t.excel_row ORDER BY t.excel_row) FROM ticket_values t"
-        f" WHERE t.snapshot_fingerprint = $fingerprint AND ({filter_sql}) AND ({incomplete})",
-        parameters,
-    ).fetchone()
-    excluded = []
-    warnings = []
-    if uncompared:
-        message = "a strict comparison field (Employee, Date, Job Number, Time or a claim component) is missing or invalid"
-        excluded.append({"code": "comparison_field_unusable", "message": message, "tickets": uncompared, "excel_rows": list(uncompared_rows or [])})
-        warnings.append(
-            f"{uncompared} Ticket{'s' if uncompared != 1 else ''} could not be compared because {message} "
-            f"(Excel row{'s' if uncompared != 1 else ''} {_rows_text(list(uncompared_rows or []))}); "
-            "they are never treated as matching."
-        )
+    excluded, warnings = _uncompared(connection, filters, fingerprint)
     result: dict[str, Any] = {
         "value": possible_duplicates,
         "tickets": tickets,
@@ -643,14 +706,136 @@ def _unflagged_exact_repeats(
     return result
 
 
+def _unflagged_exact_repeat_members(fingerprint: str, filters: Filters) -> tuple[str, dict[str, Any]]:
+    """A WITH clause defining `exact_repeats`: every member of each Strict repeat group counted as an exact repeat, not flagged.
+
+    A group qualifies when no member is a flagged duplicate, every member is
+    Approved and Keyed, and any member is inside the filters; then all its
+    members are listed, each with its ticket number, employee, base value and
+    whether its labour is priced.
+    """
+    filter_sql, parameters = filters.sql("t")
+    parameters = {**parameters, "fingerprint": fingerprint}
+    sql = f"""WITH strict AS ({strict_groups_sql()}), members AS (
+        SELECT s.strict_group, t.excel_row, t.ticket_number, t.employee_name, t.status, t.keyed,
+            COALESCE({FLAGGED_DUPLICATE_SCOPE}, false) AS flagged, COALESCE({filter_sql}, false) AS in_filter,
+            {BASE_VALUE_SQL} AS base_value, COALESCE({LABOUR_KNOWN_SQL}, false) AS labour_known
+        FROM strict s JOIN ticket_values t ON t.snapshot_fingerprint = $fingerprint AND t.excel_row = s.excel_row
+    ), qualifying AS (
+        SELECT strict_group FROM members GROUP BY strict_group
+        HAVING bool_and(COALESCE(status = 'Approved' AND keyed, false)) AND NOT bool_or(flagged) AND bool_or(in_filter)
+    ), exact_repeats AS (
+        SELECT * FROM members WHERE strict_group IN (SELECT strict_group FROM qualifying)
+    )"""
+    return sql, parameters
+
+
+def _uncompared(
+    connection: duckdb.DuckDBPyConnection, filters: Filters, fingerprint: str
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Tickets inside the filters the Strict repeat rule could not compare, as an exclusion and its warning."""
+    filter_sql, parameters = filters.sql("t")
+    incomplete = " OR ".join(f"t.{column} IS NULL" for column in STRICT_KEY.values())
+    uncompared, uncompared_rows = connection.execute(
+        "SELECT count(*), list(t.excel_row ORDER BY t.excel_row) FROM ticket_values t"
+        f" WHERE t.snapshot_fingerprint = $fingerprint AND ({filter_sql}) AND ({incomplete})",
+        {**parameters, "fingerprint": fingerprint},
+    ).fetchone()
+    if not uncompared:
+        return [], []
+    rows = list(uncompared_rows or [])
+    message = "a strict comparison field (Employee, Date, Job Number, Time or a claim component) is missing or invalid"
+    return (
+        [{"code": "comparison_field_unusable", "message": message, "tickets": uncompared, "excel_rows": rows}],
+        [
+            f"{uncompared} Ticket{'s' if uncompared != 1 else ''} could not be compared because {message} "
+            f"(Excel row{'s' if uncompared != 1 else ''} {_rows_text(rows)}); they are never treated as matching."
+        ],
+    )
+
+
+def _extra_claims(
+    connection: duckdb.DuckDBPyConnection, fingerprint: str, filters: Filters, include_rows: bool
+) -> dict[str, Any]:
+    """The hypothetical base value of n - 1 whole claims in each exact repeat, not flagged (PRD sections 5 and 9).
+
+    The Rate is not part of the strict key, so members can carry different base
+    values; the highest is taken as the claim kept, so the figure never
+    overstates. A group with a member whose labour is unpriced is left out and
+    reported rather than valued at zero.
+    """
+    exact_repeats_sql, parameters = _unflagged_exact_repeat_members(fingerprint, filters)
+    groups = connection.execute(
+        f"""{exact_repeats_sql} SELECT strict_group, list(excel_row ORDER BY excel_row),
+            list(ticket_number ORDER BY excel_row), list(base_value ORDER BY excel_row), bool_and(labour_known),
+            min(employee_name)
+        FROM exact_repeats GROUP BY strict_group ORDER BY min(excel_row)""",
+        parameters,
+    ).fetchall()
+    valued = []
+    unpriced_rows: list[int] = []
+    unpriced_groups = 0
+    total = Decimal(0)
+    for _, rows, ticket_numbers, values, priced, employee in groups:
+        if not priced:
+            unpriced_groups += 1
+            unpriced_rows.extend(rows)
+            continue
+        value = sum(values, Decimal(0)) - max(values)
+        total += value
+        valued.append({
+            "excel_rows": list(rows),
+            "ticket_numbers": list(ticket_numbers),
+            "employee": employee,
+            "tickets": len(rows),
+            "extra_claims": len(rows) - 1,
+            "ticket_values": [_number(item) for item in values],
+            "value": _number(value),
+        })
+    excluded, warnings = _uncompared(connection, filters, fingerprint)
+    if unpriced_groups:
+        rows = sorted(unpriced_rows)
+        excluded.insert(0, {
+            "code": "member_labour_unpriced",
+            "message": "a Ticket's labour is unpriced (no usable Rate), so the extra claim cannot be valued",
+            "tickets": len(rows),
+            "excel_rows": rows,
+            "possible_duplicates": unpriced_groups,
+        })
+        warnings.insert(0, (
+            f"{unpriced_groups} exact repeat{'s' if unpriced_groups != 1 else ''}, not flagged, "
+            f"{'are' if unpriced_groups != 1 else 'is'} left out because a ticket's labour is unpriced (Excel row"
+            f"{'s' if len(rows) != 1 else ''} {_rows_text(rows)}); "
+            f"{'they are' if unpriced_groups != 1 else 'it is'} not valued at zero."
+        ))
+    contributing = sum(group["tickets"] for group in valued)
+    result: dict[str, Any] = {
+        "value": _number(total),
+        "possible_duplicates": valued,
+        "tickets": contributing,
+        "coverage": {"contributing_tickets": contributing, "excluded": excluded, "partial": []},
+        "warnings": warnings,
+    }
+    if include_rows:
+        result["contributing_rows"] = sorted(row for group in valued for row in group["excel_rows"])
+    return result
+
+
 def _scoped(
-    metric: Metric, fingerprint: str, filters: Filters, as_of: dt.date, group_by: str | None
+    metric: Metric,
+    fingerprint: str,
+    filters: Filters,
+    as_of: dt.date,
+    group_by: str | None,
+    replaced_rows: list[int] | tuple[int, ...] = (),
 ) -> tuple[str, dict[str, Any]]:
     """A WITH clause defining `scoped`: one row per in-scope Ticket with its value and any exclusion."""
     filter_sql, parameters = filters.sql("t")
     parameters = {**parameters, "fingerprint": fingerprint}
     if "$as_of" in metric.value or any("$as_of" in item.predicate for item in metric.exclusions):
         parameters["as_of"] = as_of
+    if metric.reads_review_links:
+        parameters["replaced_rows"] = list(replaced_rows)
     excluded = " ".join(f"WHEN {item.predicate} THEN '{item.code}'" for item in metric.exclusions)
     partial = " ".join(f"WHEN {item.predicate} THEN '{item.code}'" for item in metric.partials)
     quantity = " ".join(

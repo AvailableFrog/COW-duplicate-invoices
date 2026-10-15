@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
-from labour_ticket_analytics import flagged, processing_queue
+from labour_ticket_analytics import flagged, processing_queue, value_context
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, Metric, MetricError, registry_payload
@@ -207,6 +207,9 @@ def create_app(state: AppState) -> FastAPI:
 
     def evaluate(fingerprint: str, metric_id: str, filters: Filters, **options) -> dict:
         metric = registry_metric(metric_id)
+        if metric.reads_review_links:
+            # Only explicit kept/replaced links reach a figure; outcomes and notes never do.
+            options = {**options, "replaced_rows": state.review.replaced_rows(fingerprint)}
         try:
             return state.store.evaluate_metric(fingerprint, metric, filters, state.as_of, **options)
         except MetricError as error:
@@ -330,6 +333,22 @@ def create_app(state: AppState) -> FastAPI:
             "caption": processing_queue.CAPTION,
             "note": processing_queue.NOTE,
             "grain": "Ticket",
+            "filters": filters.payload(),
+            **context(fingerprint),
+        }
+
+    @app.get("/api/overview/value-context")
+    def value_context_view(query: dict = Depends(filter_query)) -> dict:
+        """The three BBD figures, each a registry metric under the filters, and the analyst-reviewed alternative."""
+        fingerprint = state.active_fingerprint
+        filters = active_filters(fingerprint, query)
+        results = {figure.metric_id: evaluate(fingerprint, figure.metric_id, filters) for figure in value_context.FIGURES}
+        replaced_rows = state.review.replaced_rows(fingerprint)
+        reviewed = evaluate(fingerprint, value_context.REVIEWED.metric_id, filters) if replaced_rows else None
+        return {
+            **value_context.panel(
+                results, reviewed, replaced_rows, lambda rows: state.store.status_counts(fingerprint, rows),
+            ),
             "filters": filters.payload(),
             **context(fingerprint),
         }
