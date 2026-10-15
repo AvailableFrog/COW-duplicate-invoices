@@ -36,7 +36,7 @@ from typing import Any, Iterable
 import duckdb
 
 REVIEW_FILE_NAME = "review.duckdb"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -137,6 +137,19 @@ CREATE TABLE IF NOT EXISTS review_history (
     rationale VARCHAR NOT NULL,
     employee_labels VARCHAR[]
 );
+CREATE SEQUENCE IF NOT EXISTS saved_view_id START 1;
+CREATE TABLE IF NOT EXISTS saved_views (
+    id BIGINT PRIMARY KEY DEFAULT nextval('saved_view_id'),
+    name VARCHAR NOT NULL,
+    kind VARCHAR NOT NULL,
+    state JSON NOT NULL,
+    snapshot_fingerprint VARCHAR NOT NULL,
+    as_of VARCHAR NOT NULL,
+    versions JSON NOT NULL,
+    aliases JSON NOT NULL,
+    created_at VARCHAR NOT NULL,
+    updated_at VARCHAR NOT NULL
+);
 CREATE TABLE IF NOT EXISTS alias_decisions (
     snapshot_fingerprint VARCHAR NOT NULL,
     first_label VARCHAR NOT NULL,
@@ -151,7 +164,11 @@ CREATE TABLE IF NOT EXISTS alias_decisions (
 """
 
 # From schema version 1 (ticket #8): history rows gain the label pair an Alias decision is about.
-MIGRATIONS = {1: "ALTER TABLE review_history ADD COLUMN IF NOT EXISTS employee_labels VARCHAR[];"}
+MIGRATIONS = {
+    1: "ALTER TABLE review_history ADD COLUMN IF NOT EXISTS employee_labels VARCHAR[];",
+    # From schema version 2 (ticket #39): saved views, a new table the schema itself creates.
+    2: "SELECT 1;",
+}
 
 
 class ReviewError(ValueError):
@@ -666,6 +683,45 @@ class ReviewStore:
             ],
         }
 
+    # Saved views (ticket #39). They are not review data: saving one leaves the review revision, and so the
+    # Explore result cache, untouched.
+
+    def saved_views(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self.connection.execute(f"SELECT {VIEW_COLUMNS} FROM saved_views ORDER BY id").fetchall()
+        return [_view(row) for row in rows]
+
+    def saved_view(self, view_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.connection.execute(f"SELECT {VIEW_COLUMNS} FROM saved_views WHERE id = ?", [view_id]).fetchone()
+        return _view(row) if row else None
+
+    def save_view(self, *, name: str, kind: str, state: dict[str, Any], saved_under: dict[str, Any]) -> dict[str, Any]:
+        now = _now()
+        with self._lock:
+            row = self.connection.execute(
+                "INSERT INTO saved_views (name, kind, state, snapshot_fingerprint, as_of, versions, aliases, created_at,"
+                f" updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING {VIEW_COLUMNS}",
+                [
+                    name, kind, json.dumps(state), saved_under["snapshot_fingerprint"], saved_under["as_of"],
+                    json.dumps(saved_under["versions"]), json.dumps(saved_under["aliases"]), now, now,
+                ],
+            ).fetchone()
+        return _view(row)
+
+    def rename_view(self, view_id: int, name: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.connection.execute(
+                f"UPDATE saved_views SET name = ?, updated_at = ? WHERE id = ? RETURNING {VIEW_COLUMNS}",
+                [name, _now(), view_id],
+            ).fetchone()
+        return _view(row) if row else None
+
+    def delete_view(self, view_id: int) -> bool:
+        with self._lock:
+            row = self.connection.execute("DELETE FROM saved_views WHERE id = ? RETURNING id", [view_id]).fetchone()
+        return row is not None
+
     def summary(self, fingerprint: str) -> dict[str, Any]:
         """Everything saved for a Snapshot: outcomes, links, the replaced Tickets, and the history."""
         with self._lock:
@@ -731,4 +787,25 @@ def _link_value(replaced_row: int, retained_row: int, numbers: list[str | None])
         "retained_row": retained_row,
         "replaced_ticket_number": numbers[0],
         "retained_ticket_number": numbers[1],
+    }
+
+
+VIEW_COLUMNS = "id, name, kind, state, snapshot_fingerprint, as_of, versions, aliases, created_at, updated_at"
+
+
+def _view(row: tuple) -> dict[str, Any]:
+    view_id, name, kind, state, fingerprint, as_of, versions, aliases, created_at, updated_at = row
+    return {
+        "id": view_id,
+        "name": name,
+        "kind": kind,
+        "state": json.loads(state),
+        "saved_under": {
+            "snapshot_fingerprint": fingerprint,
+            "as_of": as_of,
+            "versions": json.loads(versions),
+            "aliases": json.loads(aliases),
+        },
+        "created_at": created_at,
+        "updated_at": updated_at,
     }

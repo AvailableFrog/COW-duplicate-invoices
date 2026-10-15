@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from labour_ticket_analytics import __version__
 from labour_ticket_analytics import (
     claimed_hours, data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, timing,
-    value_context,
+    value_context, views,
 )
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
@@ -585,6 +585,70 @@ def create_app(state: AppState) -> FastAPI:
             "message": proposal.message,
             **context(fingerprint),
         }
+
+    # Saved views (ticket #39)
+
+    def view_context() -> dict:
+        """What a view is saved under, and compared with when reopened: the state in effect now."""
+        fingerprint = state.active_fingerprint
+        return {
+            "snapshot_fingerprint": fingerprint,
+            "as_of": state.as_of.isoformat(),
+            "versions": versions(),
+            "aliases": sorted([list(pair) for pair in state.review.confirmed_aliases(fingerprint)]),
+        }
+
+    def view_failure(error: views.ViewError) -> HTTPException:
+        return HTTPException(status_code=error.status, detail=error.payload())
+
+    def no_view(view_id: int) -> HTTPException:
+        return HTTPException(status_code=404, detail={"code": "unknown_view", "field": "id", "message": f"no saved view {view_id}"})
+
+    @app.get("/api/views")
+    def list_views() -> dict:
+        now = view_context()
+        return {"views": [views.with_differences(view, now) for view in state.review.saved_views()], **context(now["snapshot_fingerprint"])}
+
+    @app.get("/api/views/{view_id}")
+    def get_view(view_id: int) -> dict:
+        view = state.review.saved_view(view_id)
+        if view is None:
+            raise no_view(view_id)
+        now = view_context()
+        return {"view": views.with_differences(view, now), **context(now["snapshot_fingerprint"])}
+
+    @app.post("/api/views")
+    def save_view(request: Request, body: dict = Body(...)) -> dict:
+        """Save the Overview filters or an Explore plan under a name, with what it is saved under."""
+        require_same_origin(request)
+        now = view_context()
+        try:
+            name = views.clean_name(body.get("name"))
+            saved_state = views.validate(body.get("kind"), body.get("state"), state.store.fields(now["snapshot_fingerprint"]))
+        except views.ViewError as error:
+            raise view_failure(error) from error
+        view = state.review.save_view(name=name, kind=body["kind"], state=saved_state, saved_under=now)
+        return {"view": views.with_differences(view, now), **context(now["snapshot_fingerprint"])}
+
+    @app.put("/api/views/{view_id}")
+    def rename_view(view_id: int, request: Request, body: dict = Body(...)) -> dict:
+        require_same_origin(request)
+        try:
+            name = views.clean_name(body.get("name"))
+        except views.ViewError as error:
+            raise view_failure(error) from error
+        view = state.review.rename_view(view_id, name)
+        if view is None:
+            raise no_view(view_id)
+        now = view_context()
+        return {"view": views.with_differences(view, now), **context(now["snapshot_fingerprint"])}
+
+    @app.delete("/api/views/{view_id}")
+    def delete_view(view_id: int, request: Request) -> dict:
+        require_same_origin(request)
+        if not state.review.delete_view(view_id):
+            raise no_view(view_id)
+        return {"deleted": view_id}
 
     @app.get("/api/overview/processing-queue")
     def processing_queue_view(query: dict = Depends(filter_query)) -> dict:

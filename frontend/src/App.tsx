@@ -30,7 +30,7 @@ import {
 import { CompareTickets, type OpenPair } from "./CompareTickets";
 import { DataReadiness, type OpenReadinessAlias, type OpenReadinessTicket } from "./DataReadiness";
 import { EvidenceDrawer, type DrawerTarget } from "./EvidenceDrawer";
-import { Explore } from "./Explore";
+import { Explore, type ExploreState } from "./Explore";
 import { ActiveFilters, FilterBar } from "./FilterBar";
 import { FlaggedDuplicates, type OpenFlagged } from "./FlaggedDuplicates";
 import { HeaderTiles } from "./HeaderTiles";
@@ -40,6 +40,7 @@ import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
 import { ValueContext } from "./ValueContext";
 import { ClaimedHoursByJob } from "./ClaimedHoursByJob";
 import { SubmissionTiming } from "./SubmissionTiming";
+import { SavedViews } from "./SavedViews";
 
 type Tab = "overview" | "explore";
 
@@ -58,6 +59,9 @@ export function App() {
   const [reimportStatus, setReimportStatus] = useState<string>("");
   const [reimporting, setReimporting] = useState(false);
   const [filters, setFilters] = useState<FilterState>(NO_FILTERS);
+  // Saved views (ticket #39): the Explore tab's current plan, and a saved one to open there.
+  const [exploreState, setExploreState] = useState<ExploreState | null>(null);
+  const [requestedExplore, setRequestedExplore] = useState<(ExploreState & { nonce: number }) | null>(null);
   const [options, setOptions] = useState<FilterOptions | null>(null);
   const [tiles, setTiles] = useState<TilesResponse | null>(null);
   const [tilesError, setTilesError] = useState("");
@@ -330,6 +334,22 @@ export function App() {
           </button>
         </div>
       </nav>
+      {state.kind === "ready" ? (
+        <SavedViews
+          tab={tab}
+          filters={filters}
+          exploreState={exploreState}
+          refresh={generation + reviewGeneration}
+          onOpenOverview={(saved) => {
+            setFilters(saved);
+            setTab("overview");
+          }}
+          onOpenExplore={(saved) => {
+            setRequestedExplore({ ...saved, nonce: Date.now() });
+            setTab("explore");
+          }}
+        />
+      ) : null}
 
       {tab === "overview" ? (
         <>
@@ -435,6 +455,8 @@ export function App() {
               overviewFilters={filters}
               reviewGeneration={reviewGeneration}
               onOpenTicket={openExploreTicket}
+              onStateChange={setExploreState}
+              requested={requestedExplore}
             />
           </div>
         ) : null}

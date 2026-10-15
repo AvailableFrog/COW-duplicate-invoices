@@ -49,6 +49,16 @@ interface ExploreProps {
   reviewGeneration: number;
   /** Open one Ticket's evidence in the drawer, from a drilldown row. */
   onOpenTicket: (row: DrilldownRow, fingerprint: string, opener: HTMLElement) => void;
+  /** Told the plan and starting filters whenever they change, so the view can be saved (ticket #39). */
+  onStateChange?: (state: ExploreState | null) => void;
+  /** A saved view to open: its plan and starting filters replace the current ones; `nonce` makes a repeat count. */
+  requested?: (ExploreState & { nonce: number }) | null;
+}
+
+/** What a saved Explore view holds: the plan and its starting filters (null for "Start with all data"). */
+export interface ExploreState {
+  plan: Plan;
+  inherited: FilterState | null;
 }
 
 /** The Overview filters in words, as the Overview's own filter line reads. */
@@ -125,7 +135,7 @@ function conform(plan: Plan, catalogue: ExploreCatalogue, previous: Plan): Plan 
 }
 
 /** The Explore tab: starter questions, editable chips compiled to a validated plan, and its chart and table. */
-export function Explore({ header, overviewFilters, reviewGeneration, onOpenTicket }: ExploreProps) {
+export function Explore({ header, overviewFilters, reviewGeneration, onOpenTicket, onStateChange, requested }: ExploreProps) {
   const [catalogue, setCatalogue] = useState<ExploreCatalogue | null>(null);
   const [catalogueError, setCatalogueError] = useState("");
   const [start, setStart] = useState<Start | null>(null);
@@ -154,6 +164,19 @@ export function Explore({ header, overviewFilters, reviewGeneration, onOpenTicke
       });
     return () => controller.abort();
   }, [header.snapshot_fingerprint]);
+
+  // A saved view replaces the plan and the starting choice; it runs like any other plan change.
+  useEffect(() => {
+    if (!requested) return;
+    setStart(requested.inherited ? { kind: "overview", filters: requested.inherited } : { kind: "all" });
+    setPlan(requested.plan);
+  }, [requested]);
+
+  const reportState = useRef(onStateChange);
+  reportState.current = onStateChange;
+  useEffect(() => {
+    reportState.current?.(plan && start ? { plan, inherited: start.kind === "overview" ? start.filters : null } : null);
+  }, [plan, start]);
 
   useEffect(() => {
     if (!plan || !start) return;
