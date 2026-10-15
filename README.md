@@ -35,6 +35,7 @@ Below it, the filter bar (date basis and range, job, status, Clear) narrows ever
 The Overview opens with five tiles from the metric registry: source records, flagged duplicates, exact repeats not flagged (possible duplicates, with their ticket count shown), Pending, and Approved/not-Keyed. They overlap conceptually and do not sum to the population.
 Below the tiles, Review priorities lists every possible duplicate the matching rules found, ranked for review.
 Opening one (each name is a button, reachable by Tab and Enter) shows its evidence drawer, described under [Evidence drawer](#evidence-drawer).
+Further down, Flagged duplicates lists the flagged tickets and the [Processing queue](#processing-queue) charts how old the Pending and Approved/not-Keyed submissions are.
 
 Options:
 
@@ -156,6 +157,24 @@ They attach by ticket number, so they survive a re-export, and no matching rule 
 Each example carries its pattern's numbered questions for Oliver, since the report asks its questions per pattern; E and F have no review note in the report.
 Notes are quoted verbatim except C and D, reworded (and marked `review_note_reworded`) so no screen shows "paid twice", "missed duplicate" or "fraud"; `source_section` names where the original wording stays.
 
+## Processing queue
+
+Two separate horizontal bar charts, **Pending submissions** and **Approved, not Keyed submissions**, count Tickets by **age since submission**: the as-of date minus the calendar date of Created, in whole days, from the registry metrics `pending_submission_age_days` and `approved_not_keyed_submission_age_days`.
+It is never time spent Pending or waiting to be Keyed, which the export does not record; the caption names the date basis and the as-of date, and the view states its grain (Ticket) and the active filters.
+On the committed workbook, as of 8 October 2026, they cover 129 and 149 Tickets:
+
+| Age since submission | 0 days | 1 day | 2 days | 3 days | 4–6 days | 7–13 days | 14–29 days | 30 days or more |
+|---|---|---|---|---|---|---|---|---|
+| Pending | 19 | 40 | 34 | 18 | 13 | 2 | 2 | 1 |
+| Approved, not Keyed | 21 | 20 | 22 | 40 | 46 | 0 | 0 | 0 |
+
+The buckets belong to the registry (decision-log entry 57): fixed edges, both ends inclusive, so changing the as-of date moves Tickets between buckets, and a Ticket whose Created is unusable or after the as-of date is reported beside the chart rather than aged.
+The global filters narrow both charts; a date range applies to its own date basis, while age is always measured from Created.
+
+Clicking a bar, or opening **View data** (the table alternative under each chart) and choosing an age, lists that bucket's Tickets oldest first with Ticket Number, Excel row, employee, Date, Created and age; the list says it holds exactly the bar's count under the filters, as-of date, Snapshot and registry version shown. Each ticket opens on its own in the evidence drawer.
+
+Charts are drawn by a small trusted-template module, `frontend/src/charts` (Vega-Lite, decision-log entry 59): the data is passed inline, nothing is loaded from a URL, no specification may carry an expression or transform, the value axis starts at zero, every bar is labelled directly, and every chart has its table alternative.
+
 ## Review outcomes
 
 A reviewer records a local judgement from the evidence drawer without touching the source; nothing is written to the workbook or the company's system.
@@ -185,8 +204,10 @@ The Name-space variant proposes that two employee labels name one person, such a
 | `POST /api/snapshot/reimport` | reads the workbook at the launch path again. Identical content keeps the same Snapshot (`"imported": false`); different content becomes a new active Snapshot beside the old one (`"imported": true`). A workbook that cannot be imported answers 422 and the active Snapshot stays. Requests from another site's page are refused |
 | `GET /api/snapshots` | every Snapshot imported in this run, oldest first, with the active one marked |
 | `GET /api/as-of`, `PUT /api/as-of` | the analytical as-of date in effect; `PUT {"date": "YYYY-MM-DD"}` changes it for every later response. It stays labelled as an assumption and never follows today's date. Requests from another site's page are refused |
-| `GET /api/metrics` | the metric registry and its version: the thirteen PRD metrics, each with ID, label, definition, unit, grain, allowed dimensions, null treatment, date basis, exclusions, lineage and availability (`available`, or `disabled` by a missing column) |
-| `GET /api/metrics/{metric_id}` | one metric under the filters below: its value (a count, sum, or for day and hour metrics the median with a `summary`; `unflagged_exact_repeat_count` counts possible duplicates and gives their `tickets`), `percentage` with numerator and denominator where the metric is a share of `ticket_count`, `coverage` naming the Tickets left out or only partly valued and why, and `warnings`. `group_by` takes an allowed dimension (`Approval Status`, `Keyed`, `Job Number`, `Job Name`, `Supervisor`, `Occupation`); `rows=true` lists the contributing Excel rows |
+| `GET /api/metrics` | the metric registry and its version: the thirteen PRD metrics, each with ID, label, definition, unit, grain, allowed dimensions, null treatment, date basis, exclusions, lineage, `buckets` (the value ranges a distribution is counted by: `id`, `label`, inclusive `min` and `max`, `max` null when open-ended; empty for other metrics) and availability (`available`, or `disabled` by a missing column) |
+| `GET /api/metrics/{metric_id}` | one metric under the filters below: its value (a count, sum, or for day and hour metrics the median with a `summary`; `unflagged_exact_repeat_count` counts possible duplicates and gives their `tickets`), `percentage` with numerator and denominator where the metric is a share of `ticket_count`, `coverage` naming the Tickets left out or only partly valued and why, and `warnings`. `group_by` takes an allowed dimension (`Approval Status`, `Keyed`, `Job Number`, `Job Name`, `Supervisor`, `Occupation`); `rows=true` lists the contributing Excel rows. A metric with buckets also gives `buckets`, each with its `tickets` count, an empty bucket as 0 |
+| `GET /api/metrics/{metric_id}/buckets/{bucket_id}` | the Tickets one bucket counts, under the filters and as-of date: `metric`, `bucket`, `tickets` (the count) and `rows`, highest value first then earliest Created, each with `excel_row`, `ticket_number`, `employee`, `date`, `created`, `status`, `keyed` and `value` (for the age metrics, days since submission), plus the filter state. 404 with `detail.code` `unknown_metric`, `no_buckets` or `unknown_bucket` |
+| `GET /api/overview/processing-queue` | the Processing queue under the filters: two `charts` (`pending_submission_age_days`, `approved_not_keyed_submission_age_days`), each with `title`, `population`, `caption` ("Age since submission"), `measured_on`, `chart` (`bar_horizontal`), `total`, `summary`, `buckets` with counts, `coverage` and `warnings`; plus the `note`, the grain and the filter state |
 | `GET /api/overview/tiles` | the five header tiles under the filters, with their definitions, the overlap note, the grain and the filter state; a tile counting possible duplicates also gives their `tickets` |
 | `GET /api/review-priorities` | the ranked possible duplicates under the filters: each with `rank`, `display_id`, `tier`, `rule_ids`, `pattern_labels`, `summary`, its `members` (Excel row, ticket number, employee, Date, Job Number, status, Keyed, `flagged_duplicate`, Created, `in_filter`) and its `candidates` (Excel rows, rule ID, fields compared, evidence strength, reason, pattern, and the pair's Review Outcome as `outcome`, display only); plus the tier and rule definitions. A filter selects a possible duplicate when any member is inside it, and every member stays listed |
 | `GET /api/filters` | what the filter bar offers: date bases with their date spans, statuses and jobs with Ticket counts |
@@ -235,10 +256,11 @@ CI (`.github/workflows/ci.yml`) builds the frontend and runs all three on every 
 ```
 src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), normalized (Ticket values for metrics),
                                metrics (registry), filters (filter bar), timeparse (interval parser), rules (matching rules, possible duplicates, priority),
-                               evidence (evidence drawer payload), flagged (Flagged duplicates view), annotations (+ annotations.json, the evidence report's notes),
+                               evidence (evidence drawer payload), flagged (Flagged duplicates view), processing_queue (Processing queue view), annotations (+ annotations.json, the evidence report's notes),
                                versions, store (DuckDB Snapshot tables), review (local review file: outcomes, links, history), api (HTTP)
 frontend/                      React + TypeScript shell built with Vite into frontend/dist (src: App, FilterBar, HeaderTiles, ReviewPriorities,
-                               FlaggedDuplicates, CompareTickets, EvidenceDrawer, ReviewPanel); e2e/ holds the Playwright flows
+                               FlaggedDuplicates, ProcessingQueue, CompareTickets, EvidenceDrawer, ReviewPanel; charts/ holds the trusted
+                               Vega-Lite templates and their renderer); e2e/ holds the Playwright flows
 tests/                         API tests at the booted-app seam
 data/                          the committed source workbook (private repository, ADR 0003)
 docs/                          PRD, decision log, ADRs, handoff sources

@@ -452,6 +452,82 @@ export interface FlaggedDuplicatesResponse extends Provenance {
   filters: FilterPayload;
 }
 
+/** A range of a distribution metric's values, both ends inclusive; `max` null is open-ended. */
+export interface MetricBucket {
+  id: string;
+  label: string;
+  min: number;
+  max: number | null;
+}
+
+export interface BucketCount extends MetricBucket {
+  tickets: number;
+}
+
+export interface CoverageItem {
+  code: string;
+  message: string;
+  tickets: number;
+  excel_rows: number[];
+}
+
+export interface DistributionSummary {
+  count: number;
+  median: number | null;
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+}
+
+/** One Processing queue chart: a registry age metric counted by its buckets. */
+export interface QueueChart {
+  metric_id: string;
+  title: string;
+  /** The population in a few words, such as "Pending". */
+  population: string;
+  label: string;
+  definition: string;
+  unit: string;
+  caption: string;
+  measured_on: string;
+  chart: "bar_horizontal";
+  availability: { status: "available" | "disabled"; reason: string | null };
+  total: number;
+  summary: DistributionSummary | null;
+  buckets: BucketCount[];
+  coverage: { contributing_tickets: number; excluded: CoverageItem[]; partial: CoverageItem[] } | null;
+  warnings: string[];
+}
+
+export interface ProcessingQueueResponse extends Provenance {
+  charts: QueueChart[];
+  caption: string;
+  note: string;
+  grain: string;
+  filters: FilterPayload;
+}
+
+/** A Ticket one bucket counts, with its value in the metric's unit (days of age since submission here). */
+export interface BucketTicket {
+  excel_row: number;
+  ticket_number: string | null;
+  employee: string | null;
+  date: string | null;
+  created: string | null;
+  status: ApprovalStatus | null;
+  keyed: boolean | null;
+  value: number;
+}
+
+export interface BucketTicketsResponse extends Provenance {
+  metric: { id: string; label: string; definition: string; unit: string };
+  bucket: MetricBucket;
+  grain: string;
+  filters: FilterPayload;
+  tickets: number;
+  rows: BucketTicket[];
+}
+
 /** A refused or failed request, with its HTTP status. */
 export class ApiError extends Error {
   constructor(
@@ -547,6 +623,24 @@ export function fetchPairExplanation(
 ): Promise<PairExplanation> {
   return getJson<PairExplanation>(
     `/api/snapshots/${encodeURIComponent(fingerprint)}/pairs/${rows[0]}/${rows[1]}?${filterQuery(filters)}`,
+    signal,
+  );
+}
+
+/** The Processing queue's two age-since-submission charts under the filters. */
+export function fetchProcessingQueue(filters: FilterState, signal?: AbortSignal): Promise<ProcessingQueueResponse> {
+  return getJson<ProcessingQueueResponse>(`/api/overview/processing-queue?${filterQuery(filters)}`, signal);
+}
+
+/** The Tickets one bucket of a registry metric counts, under the same filters as its chart. */
+export function fetchBucketTickets(
+  metricId: string,
+  bucketId: string,
+  filters: FilterState,
+  signal?: AbortSignal,
+): Promise<BucketTicketsResponse> {
+  return getJson<BucketTicketsResponse>(
+    `/api/metrics/${encodeURIComponent(metricId)}/buckets/${encodeURIComponent(bucketId)}?${filterQuery(filters)}`,
     signal,
   );
 }
