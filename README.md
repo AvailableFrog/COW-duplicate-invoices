@@ -361,6 +361,8 @@ Release-one acceptance (ticket #18) lives in its own files; `docs/test-report.md
 | `tests/test_acceptance_timings.py` | first load and ordinary response times, printed and written to `test-logs/api-timings.json`, never asserted |
 | `tests/test_reference_docs.py` | `docs/metrics-and-rules.md` matches the registry and rules the service serves; regenerate with `LTA_WRITE_DOCS=1 uv run pytest tests/test_reference_docs.py` |
 | `tests/test_log_redaction.py` | the log checker and the exception-message filter work |
+| `tests/generate.py`, `tests/test_generate.py` | a seeded, visibly synthetic same-schema workbook of any size (`uv run python tests/generate.py --rows 50000 out.xlsx`); every rule links exactly its planted pair |
+| `tests/test_scale.py` | opt-in 50,000-row run (`LTA_SCALE=1 uv run pytest -s tests/test_scale.py`): import and response times written to `test-logs/scale-timings.json`, never asserted |
 | `frontend/e2e/acceptance.spec.ts` | the second usability task (F and H), an axe WCAG 2.1 AA audit, visible focus, chart alternatives and contrast, no green, the six explanatory states, and browser timings (`test-logs/e2e-timings.json`) |
 | `frontend/e2e/layout.spec.ts` | no sideways scrolling at 1440 and 1024 px; `LTA_SCREENSHOTS=1 npm --prefix frontend run e2e -- layout` rewrites `docs/screenshots` |
 

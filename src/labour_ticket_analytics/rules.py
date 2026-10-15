@@ -453,18 +453,49 @@ def find_candidates(
 ) -> list[Candidate]:
     """Run every rule over each Ticket pair in the employee-and-date search space: one Candidate per rule per
     matching pair, with its evidence. A pair several rules match keeps every rule's reason."""
-    by_date: dict[Any, list[PairTicket]] = {}
+    # Only tickets on the same Date whose labels can relate are compared: a label's bucket is its spaceless
+    # form, merged with any label a confirmed Alias joins it to. Every pair is still checked with
+    # in_search_space, so bucketing only skips pairs that check would refuse (ticket #37: at 50,000 rows the
+    # all-pairs loop made 35 million label comparisons).
+    bucket = _employee_buckets(aliases)
+    by_date: dict[Any, dict[str, list[PairTicket]]] = {}
     for ticket in pair_tickets(connection, fingerprint, parses).values():
-        if ticket.values["Date"] is not None:
-            by_date.setdefault(ticket.values["Date"], []).append(ticket)
-    return [
-        verdict.candidate(first, second)
-        for tickets in by_date.values()
+        label = ticket.values["Employee"]
+        if ticket.values["Date"] is not None and label is not None:
+            by_date.setdefault(ticket.values["Date"], {}).setdefault(bucket(label), []).append(ticket)
+    pairs = [
+        (date_index, first, second)
+        for date_index, groups in enumerate(by_date.values())
+        for tickets in groups.values()
         for first, second in combinations(tickets, 2)  # in Excel-row order, so first is the lower row
         if in_search_space(first, second, aliases)
+    ]
+    # The order the all-pairs loop gave: by date as first seen, then by the pair's Excel rows.
+    pairs.sort(key=lambda item: (item[0], item[1].excel_row, item[2].excel_row))
+    return [
+        verdict.candidate(first, second)
+        for _, first, second in pairs
         for verdict in verdicts(first, second, aliases)
         if verdict.matched
     ]
+
+
+def _employee_buckets(aliases: Aliases):
+    """A function giving each normalized employee label a bucket: labels equal once spaces are removed share
+    one, and so do labels a confirmed Alias joins (and labels joined to those, which in_search_space then
+    checks pair by pair)."""
+    parent: dict[str, str] = {}
+
+    def root(key: str) -> str:
+        parent.setdefault(key, key)
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    for first, second in aliases.pairs:
+        parent[root(spaceless(first))] = root(spaceless(second))
+    return lambda label: root(spaceless(label))
 
 
 def record_candidates(
