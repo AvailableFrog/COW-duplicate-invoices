@@ -179,7 +179,7 @@ def test_a_work_period_conflict_is_found_across_different_jobs_when_confident_in
     assert conflict["time_comparison"]["intersection"] == [{"start": "11:30", "end": "12:30"}]
     assert "conflicting work claim" in conflict["reason"]
     assert "different jobs" in conflict["reason"]
-    assert "Possible correction or resubmission" in payload["pattern_labels"]
+    assert payload["pattern_labels"] == ["Possible correction or resubmission"]
 
 
 def test_equal_hours_on_the_same_day_never_link_tickets_on_their_own(tmp_path):
@@ -320,3 +320,14 @@ def test_the_new_rules_join_the_ranked_list_and_c_to_f_still_lead(app):
     rows = [m["excel_row"] for item in ranked for m in item["members"]]
     assert len(rows) == len(set(rows))
     assert [item["tier"]["rank"] for item in ranked] == sorted(item["tier"]["rank"] for item in ranked)
+
+
+def test_c_to_f_read_only_as_the_same_claim_appearing_twice_though_their_times_also_overlap(app):
+    # C, D, E and F: each pair also carries a Work-period conflict Candidate, labelled with the repeat's pattern.
+    for row in (620, 974, 1309, 2206):
+        payload = evidence(app, row)
+        assert sorted(c["rule_id"] for c in payload["candidates"]) == ["strict_repeat", "work_period_conflict"]
+        assert payload["pattern_labels"] == ["Same claim appears twice"]
+        assert {c["pattern"] for c in payload["candidates"]} == {"Same claim appears twice"}
+    # G: a time-text variant's overlap belongs to that pattern too.
+    assert evidence(app, 82)["pattern_labels"] == ["Same claim looks different as text"]

@@ -17,7 +17,7 @@ because every numeric response carries it.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import combinations
 from typing import Any
 
@@ -226,13 +226,22 @@ def in_search_space(first: PairTicket, second: PairTicket) -> bool:
 
 
 def verdicts(first: PairTicket, second: PairTicket) -> list[Verdict]:
-    """Every rule's verdict on a pair inside the search space, in RULES order; `first` is the lower Excel row."""
-    return [
+    """Every rule's verdict on a pair inside the search space, in RULES order; `first` is the lower Excel row.
+
+    When the whole claim repeats (a Strict repeat or Time-text variant), the
+    pair's overlap is part of that repeat, so its Work-period conflict takes
+    the repeat's pattern and adds no "Possible correction or resubmission".
+    """
+    strict, variant, conflict, ambiguous = (
         _strict_repeat(first, second),
         _time_text_variant(first, second),
         _work_period_conflict(first, second),
         _ambiguous_period_comparison(first, second),
-    ]
+    )
+    repeat = next((verdict for verdict in (strict, variant) if verdict.matched), None)
+    if conflict.matched and repeat is not None:
+        conflict = replace(conflict, pattern=repeat.rule.pattern)
+    return [strict, variant, conflict, ambiguous]
 
 
 def explain(first: PairTicket, second: PairTicket) -> dict[str, Any]:

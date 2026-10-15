@@ -120,7 +120,7 @@ def test_every_candidate_carries_its_rule_fields_compared_evidence_strength_and_
 def test_each_row_shows_pattern_labels_an_evidence_summary_and_member_source_states(app):
     peter = by_rows(app, 620, 855)
 
-    assert peter["pattern_labels"] == ["Same claim appears twice", "Possible correction or resubmission"]
+    assert peter["pattern_labels"] == ["Same claim appears twice"]
     assert "Same claim submitted twice" in peter["summary"]
     assert [
         (m["excel_row"], m["status"], m["keyed"], m["job_number"], m["flagged_duplicate"]) for m in peter["members"]

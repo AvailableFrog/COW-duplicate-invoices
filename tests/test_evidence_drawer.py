@@ -97,7 +97,7 @@ def test_the_reason_and_every_candidate_edge_show_its_rule_fields_compared_and_e
     ]
     assert peter["candidates"][0]["reason"].startswith("Same claim submitted twice")
     assert peter["candidates"][1]["reason"].startswith("Times overlap")
-    assert peter["pattern_labels"] == ["Same claim appears twice", "Possible correction or resubmission"]
+    assert peter["pattern_labels"] == ["Same claim appears twice"]
     assert peter["tier"]["rank"] == 1
     assert peter["exact_repeat_not_flagged"] is True
 
