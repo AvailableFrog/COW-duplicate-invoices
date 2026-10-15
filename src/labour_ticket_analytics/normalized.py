@@ -42,8 +42,11 @@ COLUMNS = {
 def employee_label(cell: Cell | None) -> str | None:
     """Employee text after trim, case-fold and whitespace collapse: a label, not a verified person."""
     text = _text(cell)
-    if text is None:
-        return None
+    return None if text is None else normalize_label(text)
+
+
+def normalize_label(text: str) -> str | None:
+    """A name as an employee label: trimmed, case-folded, whitespace collapsed; None when nothing is left."""
     return " ".join(text.split()).casefold() or None
 
 

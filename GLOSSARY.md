@@ -67,7 +67,7 @@ A reviewer's link from one replaced Ticket to one Ticket kept in its place; a re
 _Avoid_: survivor, original, winner, exclusion
 
 **Alias**:
-A reviewer-confirmed statement that two employee labels name one person, such as "Mario Collymore" and "Mariocollymore". Until confirmed it is only a suggestion.
+A reviewer-confirmed statement that two employee labels name one person, such as "Mario Collymore" and "Mariocollymore". Until confirmed it is only a suggestion. Once confirmed, the rules that accept an Alias compare both labels' tickets as one employee; the labels themselves are never merged or counted as one.
 _Avoid_: merge, same person, fuzzy match, identity match
 
 ### Never claimed

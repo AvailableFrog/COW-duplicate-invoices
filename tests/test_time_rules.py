@@ -269,9 +269,9 @@ def test_the_pair_explanation_gives_every_rules_verdict_for_a_linked_pair(app):
     assert peter["excel_rows"] == [620, 855]
     assert peter["linked"] is True
     assert [rule["rule_id"] for rule in peter["rules"]] == [
-        "strict_repeat", "time_text_variant", "work_period_conflict", "ambiguous_period_comparison",
+        "strict_repeat", "time_text_variant", "name_space_variant", "work_period_conflict", "ambiguous_period_comparison",
     ]
-    assert [rule["matched"] for rule in peter["rules"]] == [True, False, True, False]
+    assert [rule["matched"] for rule in peter["rules"]] == [True, False, False, True, False]
     assert all(rule["reason"] for rule in peter["rules"])
     assert peter["possible_duplicate"] == "Possible duplicate L225526+L225761"
 
@@ -296,7 +296,8 @@ def test_pairs_outside_the_employee_and_date_search_space_are_never_compared(app
 def test_every_rule_is_described_with_its_fields_strength_and_pattern(app):
     rules = {rule["id"]: rule for rule in app.get("/api/review-priorities").json()["rules"]}
 
-    assert list(rules) == ["strict_repeat", *NEW_RULES]
+    # Ticket #10 adds the Name-space variant between them, in PRD section 5 order.
+    assert list(rules) == ["strict_repeat", "time_text_variant", "name_space_variant", *NEW_RULES[1:]]
     assert rules["time_text_variant"]["pattern"] == "Same claim looks different as text"
     assert rules["work_period_conflict"]["fields_compared"] == ["Employee", "Date", "Time"]
     assert rules["ambiguous_period_comparison"]["evidence_strength"] == "weak"

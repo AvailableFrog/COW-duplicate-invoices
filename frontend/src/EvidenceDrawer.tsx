@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
+  ApiError,
   fetchEvidence,
   fetchPairExplanation,
   type Annotation,
@@ -38,7 +39,7 @@ interface EvidenceDrawerProps {
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; target: DrawerTarget; loaded: Loaded }
-  | { kind: "failed"; target: DrawerTarget; message: string };
+  | { kind: "failed"; target: DrawerTarget; message: string; status: number | null };
 
 // Visible stand-ins for whitespace, shown only while "Show whitespace" is on.
 const WHITESPACE_MARKS: Record<string, string> = { " ": "·", "\t": "→", " ": "°", "\n": "↵\n", "\r": "←" };
@@ -439,6 +440,8 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
   const [settled, setState] = useState<LoadState>({ kind: "loading" });
   // Bumped after a review save: the evidence is fetched again in place, keeping the drawer open.
   const [reviewGeneration, setReviewGeneration] = useState(0);
+  // The target whose evidence a review save last reloaded: an Alias decision can unlink its tickets.
+  const [reviewedTarget, setReviewedTarget] = useState<DrawerTarget | null>(null);
   const state: LoadState = settled.kind !== "loading" && settled.target === target ? settled : { kind: "loading" };
 
   useEffect(() => {
@@ -465,13 +468,19 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
       .then((loaded) => setState({ kind: "ready", target, loaded }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        setState({ kind: "failed", target, message: error instanceof Error ? error.message : String(error) });
+        setState({
+          kind: "failed",
+          target,
+          message: error instanceof Error ? error.message : String(error),
+          status: error instanceof ApiError ? error.status : null,
+        });
       });
     return () => controller.abort();
   }, [target, filters, reviewGeneration]);
 
   function reviewChanged() {
     setReviewGeneration((value) => value + 1);
+    setReviewedTarget(target);
     onReviewChange();
   }
 
@@ -508,7 +517,12 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
           </header>
           <div className="drawer-body">
             {state.kind === "loading" ? <p className="status">Loading the evidence…</p> : null}
-            {state.kind === "failed" ? (
+            {state.kind === "failed" && state.status === 404 && reviewedTarget === target ? (
+              <p className="notice" role="status">
+                After that decision the matching rules no longer link these tickets, so there is no possible duplicate
+                to show. The decision and its history stay saved; close the drawer to see the updated list.
+              </p>
+            ) : state.kind === "failed" ? (
               <p className="notice notice-error" role="alert">
                 The evidence could not be loaded: {state.message}.{" "}
                 {target.kind === "pair"

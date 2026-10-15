@@ -2,8 +2,11 @@ import { useId, useState, type FormEvent } from "react";
 
 import {
   linkReplacement,
+  saveAlias,
   saveOutcome,
   unlinkReplacement,
+  type AliasHistoryValue,
+  type AliasProposal,
   type EvidenceMember,
   type HistoryEntry,
   type LinkHistoryValue,
@@ -13,6 +16,7 @@ import {
   type PairOutcome,
   type PossibleDuplicateReview,
   type ReplacementLink,
+  type RerunCandidate,
 } from "./api";
 
 const REVIEWER_KEY = "lta.reviewer";
@@ -56,7 +60,10 @@ interface ReviewPanelProps {
   onChanged: () => void;
 }
 
-/** Local review controls for one possible duplicate: an outcome per Ticket pair, kept/replaced links and history. */
+/**
+ * Local review controls for one possible duplicate: a decision on each proposed Alias, an outcome per Ticket pair,
+ * kept/replaced links and history.
+ */
 export function ReviewPanel({ fingerprint, members, review, onChanged }: ReviewPanelProps) {
   const [reviewer, setReviewer] = useState(rememberedReviewer);
   const reviewerId = useId();
@@ -98,6 +105,16 @@ export function ReviewPanel({ fingerprint, members, review, onChanged }: ReviewP
         </span>
       </div>
 
+      {review.aliases.map((alias) => (
+        <AliasDecisionForm
+          key={alias.labels.join("|")}
+          fingerprint={fingerprint}
+          alias={alias}
+          requireReviewer={requireReviewer}
+          onSaved={onChanged}
+        />
+      ))}
+
       {review.pairs.map((pair) => (
         <PairOutcomeForm
           key={pair.excel_rows.join("-")}
@@ -121,6 +138,109 @@ export function ReviewPanel({ fingerprint, members, review, onChanged }: ReviewP
 
       <ReviewHistory history={review.history} />
     </section>
+  );
+}
+
+/** "“Mario Collymore” and “Mariocollymore”": the names as written on the tickets. */
+function aliasNames(names: string[]): string {
+  const quoted = names.map((name) => `“${name}”`);
+  return quoted.length > 1 ? `${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}` : quoted.join("");
+}
+
+function rerunText(candidates: RerunCandidate[]): string {
+  return candidates
+    .map((candidate) => `${candidate.rule_label} between rows ${candidate.excel_rows[0]} and ${candidate.excel_rows[1]}`)
+    .join("; ");
+}
+
+interface AliasDecisionFormProps {
+  fingerprint: string;
+  alias: AliasProposal;
+  requireReviewer: () => string | null;
+  onSaved: () => void;
+}
+
+/** Confirm or reject a proposed Alias, always with a reason; a change runs the matching rules again. */
+function AliasDecisionForm({ fingerprint, alias, requireReviewer, onSaved }: AliasDecisionFormProps) {
+  const id = useId();
+  const [rationale, setRationale] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ kind: "saved" | "error"; text: string } | null>(null);
+  const rows = alias.proposed_by.map(([first, second]) => `rows ${first} and ${second}`).join("; ");
+
+  async function decide(decision: "confirmed" | "rejected") {
+    const reviewer = requireReviewer();
+    if (!reviewer) {
+      setStatus({ kind: "error", text: "Enter your reviewer label above before deciding." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await saveAlias(fingerprint, { labels: alias.labels, decision, reviewer, rationale });
+      setRationale("");
+      if (!saved.changed) {
+        setStatus({ kind: "saved", text: `Nothing changed; the Alias stays ${saved.decision.label}.` });
+      } else {
+        const { added, removed } = saved.rerun;
+        const effect = [
+          added.length > 0 ? `added ${rerunText(added)}` : "",
+          removed.length > 0 ? `removed ${rerunText(removed)}` : "",
+        ].filter(Boolean);
+        setStatus({
+          kind: "saved",
+          text: `Saved: ${saved.decision.label}. The matching rules ran again and ${effect.length > 0 ? effect.join(", and ") : "found the same links as before"}.`,
+        });
+      }
+      onSaved();
+    } catch (error: unknown) {
+      setStatus({ kind: "error", text: `Not saved: ${message(error)}.` });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      className="pair-outcome alias-decision"
+      aria-labelledby={`${id}-title`}
+      onSubmit={(event) => event.preventDefault()}
+    >
+      <h4 id={`${id}-title`}>Proposed Alias: {aliasNames(alias.names)}</h4>
+      <p className="pair-current">
+        Decision: <strong>{alias.decision.label}</strong>
+        {alias.saved ? (
+          <span className="muted">
+            {" "}
+            by {alias.reviewer}, {when(alias.recorded_at ?? "")}
+          </span>
+        ) : (
+          <span className="muted"> (no decision yet; the two labels stay separate)</span>
+        )}
+      </p>
+      <p className="muted">
+        The Name-space variant found the same claim under both names ({rows}): they are equal once spaces and case are
+        ignored. Confirm only if you know both labels name one person; the Work-period conflict rule then compares their
+        tickets as one employee on every date. Rejecting removes what confirming added. A shared email is never a reason,
+        and the employee-label count always counts both labels.
+      </p>
+      <div className="review-fields">
+        <label>
+          Reason for this decision (required)
+          <input type="text" value={rationale} maxLength={1000} onChange={(event) => setRationale(event.target.value)} />
+        </label>
+      </div>
+      <div className="form-actions">
+        <button type="button" className="primary" disabled={saving} onClick={() => void decide("confirmed")}>
+          Confirm Alias
+        </button>
+        <button type="button" className="secondary" disabled={saving} onClick={() => void decide("rejected")}>
+          Reject Alias
+        </button>
+        <p className={status?.kind === "error" ? "form-status unresolved" : "form-status"} role="status">
+          {status?.text}
+        </p>
+      </div>
+    </form>
   );
 }
 
@@ -403,6 +523,24 @@ function linkText(value: LinkHistoryValue | null): string {
   return `${ticketLabel(value.replaced_ticket_number, value.replaced_row)} replaced, ${ticketLabel(value.retained_ticket_number, value.retained_row)} kept`;
 }
 
+function aliasText(value: AliasHistoryValue | null): string {
+  return value ? value.decision.label : "Proposed";
+}
+
+function historySubject(entry: HistoryEntry): string {
+  if (entry.kind === "outcome") {
+    return `Outcome for ${ticketLabel(entry.ticket_numbers[0], entry.excel_rows[0])} and ${ticketLabel(entry.ticket_numbers[1], entry.excel_rows[1])}`;
+  }
+  if (entry.kind === "alias") return `Alias for “${entry.employee_labels[0]}” and “${entry.employee_labels[1]}”`;
+  return "Kept/replaced link";
+}
+
+function historyValue(entry: HistoryEntry, side: "previous" | "new"): string {
+  if (entry.kind === "outcome") return outcomeText(entry[side]);
+  if (entry.kind === "alias") return aliasText(entry[side]);
+  return linkText(entry[side]);
+}
+
 function ReviewHistory({ history }: { history: HistoryEntry[] }) {
   return (
     <div className="review-history">
@@ -428,17 +566,9 @@ function ReviewHistory({ history }: { history: HistoryEntry[] }) {
                 <tr key={entry.entry}>
                   <td className="num">{when(entry.recorded_at)}</td>
                   <td>{entry.reviewer}</td>
-                  <td>
-                    {entry.kind === "outcome"
-                      ? `Outcome for ${ticketLabel(entry.ticket_numbers[0], entry.excel_rows[0])} and ${ticketLabel(entry.ticket_numbers[1], entry.excel_rows[1])}`
-                      : "Kept/replaced link"}
-                  </td>
-                  <td className="cell-text">
-                    {entry.kind === "outcome" ? outcomeText(entry.previous) : linkText(entry.previous)}
-                  </td>
-                  <td className="cell-text">
-                    {entry.kind === "outcome" ? outcomeText(entry.new) : linkText(entry.new)}
-                  </td>
+                  <td>{historySubject(entry)}</td>
+                  <td className="cell-text">{historyValue(entry, "previous")}</td>
+                  <td className="cell-text">{historyValue(entry, "new")}</td>
                   <td className="cell-text">{entry.rationale || <span className="muted">None given</span>}</td>
                 </tr>
               ))}

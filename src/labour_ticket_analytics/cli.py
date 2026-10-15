@@ -22,6 +22,7 @@ import uvicorn
 
 from labour_ticket_analytics.api import DEFAULT_AS_OF, AppState, create_app
 from labour_ticket_analytics.review import ReviewStore, ReviewStoreUnavailable
+from labour_ticket_analytics.rules import Aliases
 from labour_ticket_analytics.store import SnapshotStore
 from labour_ticket_analytics.workbook import WorkbookError, import_workbook
 
@@ -74,10 +75,11 @@ def main(argv: list[str] | None = None) -> int:
         require_loopback(args.host)
         started = time.perf_counter()
         snapshot = import_workbook(args.workbook)
-        store = SnapshotStore()
-        store.add_snapshot(snapshot)
-        elapsed = time.perf_counter() - started
         review = ReviewStore.in_data_dir(args.data_dir)
+        store = SnapshotStore()
+        # The rules run under the Aliases already confirmed for this Snapshot in the review file.
+        store.add_snapshot(snapshot, Aliases(review.confirmed_aliases(snapshot.fingerprint)))
+        elapsed = time.perf_counter() - started
     except (LaunchError, WorkbookError, ReviewStoreUnavailable) as error:
         print(f"error: {error}", file=sys.stderr, flush=True)
         return 2

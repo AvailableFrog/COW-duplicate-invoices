@@ -117,6 +117,8 @@ export interface Member {
   excel_row: number;
   ticket_number: string | null;
   employee: string | null;
+  /** The normalized label the rules compare; two labels stay two even under a confirmed Alias. */
+  employee_label: string | null;
   date: string | null;
   job_number: number | null;
   status: ApprovalStatus | null;
@@ -171,6 +173,8 @@ export interface Rule {
   evidence_strength: string;
   fields_compared: string[];
   reason: string;
+  /** Whether a confirmed Alias widens this rule's employee key. */
+  accepts_alias: boolean;
 }
 
 export interface ReviewPrioritiesResponse extends Provenance {
@@ -303,21 +307,56 @@ export interface LinkHistoryValue {
   retained_ticket_number: string | null;
 }
 
+export type AliasDecisionId = "proposed" | "confirmed" | "rejected";
+
+export interface AliasDecisionLabel {
+  id: AliasDecisionId;
+  label: string;
+}
+
+export interface AliasHistoryValue {
+  labels: [string, string];
+  decision: AliasDecisionLabel;
+}
+
 export type HistoryEntry = {
   entry: number;
-  /** For an outcome the pair, lower row first; for a link the replaced row, then the kept row. */
-  excel_rows: [number, number];
-  ticket_numbers: [string | null, string | null];
+  /**
+   * For an outcome the pair, lower row first; for a link the replaced row, then the kept row;
+   * for an Alias decision the rows of the tickets proposing it.
+   */
+  excel_rows: number[];
+  ticket_numbers: (string | null)[];
   reviewer: string;
   recorded_at: string;
   rationale: string;
 } & (
   | { kind: "outcome"; previous: OutcomeHistoryValue | null; new: OutcomeHistoryValue | null }
   | { kind: "link"; previous: LinkHistoryValue | null; new: LinkHistoryValue | null }
+  | { kind: "alias"; employee_labels: [string, string]; previous: AliasHistoryValue | null; new: AliasHistoryValue | null }
 );
+
+/** A proposed Alias: two employee labels the Name-space variant found on the same claim, with the reviewer's decision. */
+export interface AliasProposal {
+  /** The normalized labels, sorted: the key the decision is stored under. */
+  labels: [string, string];
+  /** The names as written on the tickets. */
+  names: string[];
+  /** The Ticket pairs proposing it, Excel rows lower first. */
+  proposed_by: [number, number][];
+  decision: AliasDecisionLabel;
+  reviewer: string | null;
+  recorded_at: string | null;
+  rationale: string;
+  saved: boolean;
+  history: HistoryEntry[];
+}
 
 export interface PossibleDuplicateReview {
   outcome_values: OutcomeValue[];
+  alias_decision_values: (AliasDecisionLabel & { definition: string })[];
+  /** Aliases about two of the members' labels: proposed here, or widening a rule here once confirmed. */
+  aliases: AliasProposal[];
   pairs: (PairOutcome & { rule_ids: string[] })[];
   links: ReplacementLink[];
   /** Newest first. */
@@ -363,7 +402,9 @@ export interface PairMember extends EvidenceMember {
 /** Why two Tickets are or are not linked, with or without a Candidate. */
 export interface PairExplanation extends Provenance, ShownEvidence {
   excel_rows: [number, number];
+  /** Inside the search space: the same Date, and the same label, a spacing variant or a confirmed Alias. */
   same_employee_and_date: boolean;
+  employee_relation: "same_label" | "confirmed_alias" | "spacing_differs" | "different" | "unusable";
   linked: boolean;
   rules: RuleVerdict[];
   summary: string;
@@ -373,7 +414,17 @@ export interface PairExplanation extends Provenance, ShownEvidence {
   members: PairMember[];
 }
 
-async function failure(response: Response): Promise<Error> {
+/** A refused or failed request, with its HTTP status. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function failure(response: Response): Promise<ApiError> {
   let detail = `${response.status} ${response.statusText}`;
   try {
     const body = (await response.json()) as { detail?: unknown };
@@ -384,7 +435,7 @@ async function failure(response: Response): Promise<Error> {
   } catch {
     // keep the status line
   }
-  return new Error(detail);
+  return new ApiError(detail, response.status);
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -515,4 +566,28 @@ export function unlinkReplacement(
   change: { reviewer: string; rationale: string },
 ): Promise<ReplacementLink & { removed: boolean }> {
   return sendJson("DELETE", linkPath(fingerprint, replacedRow, retainedRow), change);
+}
+
+export interface AliasChange {
+  labels: [string, string];
+  decision: Exclude<AliasDecisionId, "proposed">;
+  reviewer: string;
+  rationale: string;
+}
+
+/** A Candidate a rule run added or removed, with its rule's name. */
+export type RerunCandidate = Omit<Candidate, "outcome"> & { rule_label: string };
+
+/** What a rule run changed after an Alias decision. */
+export interface RuleRerun {
+  added: RerunCandidate[];
+  removed: RerunCandidate[];
+}
+
+/** Confirm or reject a proposed Alias; a change runs the matching rules again over the Snapshot. */
+export function saveAlias(
+  fingerprint: string,
+  change: AliasChange,
+): Promise<AliasProposal & { changed: boolean; rules_ran: boolean; rerun: RuleRerun }> {
+  return sendJson("PUT", `/api/snapshots/${encodeURIComponent(fingerprint)}/aliases`, change);
 }

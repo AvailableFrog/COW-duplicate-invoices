@@ -30,7 +30,7 @@ test("comparing A's two tickets says why they are separate work and not linked",
   await expect(drawer.getByRole("heading", { name: "Why these tickets are not linked" })).toBeVisible();
   await expect(drawer.locator(".drawer-reason")).toContainText("separate work periods");
   await expect(drawer).toContainText("Work periods are separate");
-  await expect(drawer.getByRole("list", { name: "Each rule's verdict" }).getByRole("listitem")).toHaveCount(4);
+  await expect(drawer.getByRole("list", { name: "Each rule's verdict" }).getByRole("listitem")).toHaveCount(5);
   await expect(drawer.getByRole("heading", { name: "Evidence report example A: Romarian Alleyne: different jobs" })).toBeVisible();
 
   await page.keyboard.press("Escape");
