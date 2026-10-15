@@ -931,7 +931,7 @@ interface DrilldownPanelProps {
 }
 
 /** The source tickets behind the chart or one of its marks, from the same evaluation, with CSV download. */
-function DrilldownPanel({ request, group, headingId, onClose, onOpenTicket }: DrilldownPanelProps) {
+export function DrilldownPanel({ request, group, headingId, onClose, onOpenTicket }: DrilldownPanelProps) {
   const [data, setData] = useState<DrilldownResult | null>(null);
   const [error, setError] = useState("");
   const [shown, setShown] = useState(PAGE);

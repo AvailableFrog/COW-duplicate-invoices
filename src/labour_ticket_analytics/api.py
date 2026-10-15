@@ -14,7 +14,8 @@ from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
 from labour_ticket_analytics import (
-    claimed_hours, data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, value_context,
+    claimed_hours, data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, timing,
+    value_context,
 )
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
@@ -502,6 +503,13 @@ def create_app(state: AppState) -> FastAPI:
         fingerprint, executed, cache = executed_plan(body)
         return {**executed.payload, "cache": cache, **context(fingerprint)}
 
+    def overview_plan(plan: dict, inheritance: dict) -> dict:
+        """Run an Overview panel's fixed plan under the Overview filters: its request, for drilldowns and
+        exports, and its result exactly as /api/plans/execute returns it."""
+        request = {"plan": plan, "inherited": inheritance}
+        fingerprint, executed, cache = executed_plan(request)
+        return {"request": request, "result": {**executed.payload, "cache": cache, **context(fingerprint)}}
+
     def listing(body: dict) -> tuple[str, plans.Executed, dict, dict]:
         """The drilldown the request asks for: the whole chart (`group` null) or one of its marks by id."""
         fingerprint, executed, cache = executed_plan(body)
@@ -625,24 +633,16 @@ def create_app(state: AppState) -> FastAPI:
                 },
             )
         fingerprint = state.active_fingerprint
-        inheritance = claimed_hours.inherited(query)
-
-        def run(metric_id: str) -> tuple[dict, dict]:
-            request = {"plan": claimed_hours.plan(metric_id), "inherited": inheritance}
-            _, executed, cache = executed_plan(request)
-            return request, {**executed.payload, "cache": cache, **context(fingerprint)}
-
-        request, result = run(chosen.metric_id)
+        inheritance = plans.overview_inherited(query)
+        main = overview_plan(claimed_hours.plan(chosen.metric_id), inheritance)
         replaced = state.review.replaced_rows(fingerprint)
         reviewed = None
         if replaced and chosen.reviewed_metric_id:
-            reviewed_request, reviewed_result = run(chosen.reviewed_metric_id)
             reviewed = {
                 "label": claimed_hours.REVIEWED_LABEL,
                 "note": claimed_hours.REVIEWED_NOTE,
                 "replaced_tickets": len(replaced),
-                "request": reviewed_request,
-                "result": reviewed_result,
+                **overview_plan(claimed_hours.plan(chosen.reviewed_metric_id), inheritance),
             }
         return {
             "title": chosen.title,
@@ -650,10 +650,34 @@ def create_app(state: AppState) -> FastAPI:
             "note": claimed_hours.NOTE,
             "measure": chosen.id,
             "measures": [item.payload() for item in claimed_hours.MEASURES],
-            "request": request,
-            "result": result,
+            **main,
             "reviewed": reviewed,
-            "filters": result["filters"],
+            "filters": main["result"]["filters"],
+            **context(fingerprint),
+        }
+
+    @app.get("/api/overview/submission-timing")
+    def submission_timing_view(query: dict = Depends(filter_query)) -> dict:
+        """Weekly submissions stacked by current status, and the lag and approval-interval distributions, each
+        built from Explore plans under the Overview filters and served with its request for drilldowns."""
+        fingerprint = state.active_fingerprint
+        inheritance = plans.overview_inherited(query)
+        series = [
+            {"status": status, **overview_plan(timing.weekly_plan(status), inheritance)} for status in timing.STATUSES
+        ]
+        every = overview_plan(timing.weekly_plan(None), inheritance)
+        return {
+            "question": timing.QUESTION,
+            "weekly": timing.weekly(series, every),
+            "lag": {
+                "title": timing.LAG_TITLE, "note": timing.LAG_NOTE,
+                **overview_plan(timing.distribution_plan("submission_lag_days"), inheritance),
+            },
+            "interval": {
+                "title": timing.INTERVAL_TITLE, "note": timing.INTERVAL_NOTE,
+                **overview_plan(timing.distribution_plan("observed_approval_interval_hours"), inheritance),
+            },
+            "filters": every["result"]["filters"],
             **context(fingerprint),
         }
 

@@ -39,6 +39,7 @@ import { ReviewPriorities, type OpenEvidence } from "./ReviewPriorities";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
 import { ValueContext } from "./ValueContext";
 import { ClaimedHoursByJob } from "./ClaimedHoursByJob";
+import { SubmissionTiming } from "./SubmissionTiming";
 
 type Tab = "overview" | "explore";
 
@@ -412,6 +413,7 @@ export function App() {
               reviewGeneration={reviewGeneration}
               onOpenTicket={openExploreTicket}
             />
+            <SubmissionTiming filters={filters} generation={generation} onOpenTicket={openExploreTicket} />
             {valueError ? (
               <p className="notice notice-error" role="alert">
                 The value context could not be loaded: {valueError}. Change the filters or reload the page.

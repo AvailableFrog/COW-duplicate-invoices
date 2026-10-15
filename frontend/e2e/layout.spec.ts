@@ -67,6 +67,20 @@ for (const width of WIDTHS) {
       await shoot(page, `claimed-hours-${width}`);
     });
 
+    test("submission and review timing fits the page and its weekly table scrolls inside its box", async ({ page, app }) => {
+      await page.goto(app.baseURL);
+      const panel = page.getByRole("region", { name: "Submission and review timing" });
+      await expect(panel.locator('[role="graphics-document"]')).toHaveCount(3);
+      const weekly = panel.getByRole("region", { name: "Weekly submissions by current status" });
+      await weekly.getByText("View data", { exact: true }).click();
+      await expect(weekly.getByRole("table")).toBeVisible();
+
+      expect(await pageScrollsSideways(page)).toBe(false);
+      expect(await overflowing(page)).toEqual([]);
+      await panel.evaluate((element) => element.scrollIntoView({ block: "start" }));
+      await shoot(page, `timing-${width}`);
+    });
+
     test("the evidence drawer's source comparison scrolls inside its box rather than clipping", async ({ page, app }) => {
       await page.goto(app.baseURL);
       await page.getByRole("button", { name: PETER }).click();

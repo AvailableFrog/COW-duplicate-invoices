@@ -360,6 +360,21 @@ def _compatibility(
         ))
 
 
+def overview_inherited(query: dict[str, Any]) -> dict[str, Any]:
+    """The Overview filter bar's query state, as the raw `inherited` object a plan request carries.
+
+    The Overview panels built from plans (release 1.1) run under these, so their drilldowns can be requested
+    with the same object.
+    """
+    return {
+        "date_basis": query["date_basis"],
+        "date_from": query["date_from"].isoformat() if query["date_from"] else None,
+        "date_to": query["date_to"].isoformat() if query["date_to"] else None,
+        "jobs": list(query["jobs"]),
+        "statuses": list(query["statuses"]),
+    }
+
+
 def inherited(raw: Any, fields: tuple[str, ...] | list[str]) -> Inherited:
     """The Overview filters a plan inherits, as the filter bar holds them; None means "Start with all data"."""
     if raw is None:

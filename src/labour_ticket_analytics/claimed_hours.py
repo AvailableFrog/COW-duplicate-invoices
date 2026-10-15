@@ -68,13 +68,3 @@ def plan(metric_id: str) -> dict[str, Any]:
         "include_other": True,
     }
 
-
-def inherited(query: dict[str, Any]) -> dict[str, Any]:
-    """The Overview filter bar's state, as a plan inherits it."""
-    return {
-        "date_basis": query["date_basis"],
-        "date_from": query["date_from"].isoformat() if query["date_from"] else None,
-        "date_to": query["date_to"].isoformat() if query["date_to"] else None,
-        "jobs": list(query["jobs"]),
-        "statuses": list(query["statuses"]),
-    }

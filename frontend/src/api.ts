@@ -960,6 +960,40 @@ export function fetchClaimedHours(
   return getJson<ClaimedHoursResponse>(`/api/overview/claimed-hours?${params.toString()}`, signal);
 }
 
+/** One Overview chart built from a fixed plan: the plan it ran and the executed result (release 1.1). */
+export interface OverviewPlanChart {
+  request: { plan: Plan };
+  result: PlanResult;
+}
+
+export interface TimingWeek {
+  id: string;
+  label: string;
+  segments: { status: string; tickets: number }[];
+  total: number;
+}
+
+export interface SubmissionTimingResponse extends Provenance {
+  question: string;
+  weekly: {
+    title: string;
+    caption: string;
+    statuses: string[];
+    weeks: TimingWeek[];
+    total: number;
+    other_status_tickets: number;
+    hidden_weeks: number;
+    series: (OverviewPlanChart & { status: string })[];
+    all: OverviewPlanChart;
+  };
+  lag: OverviewPlanChart & { title: string; note: string };
+  interval: OverviewPlanChart & { title: string; note: string };
+}
+
+export function fetchSubmissionTiming(filters: FilterState, signal?: AbortSignal): Promise<SubmissionTimingResponse> {
+  return getJson<SubmissionTimingResponse>(`/api/overview/submission-timing?${filterQuery(filters)}`, signal);
+}
+
 export function fetchValueContext(filters: FilterState, signal?: AbortSignal): Promise<ValueContextResponse> {
   return getJson<ValueContextResponse>(`/api/overview/value-context?${filterQuery(filters)}`, signal);
 }

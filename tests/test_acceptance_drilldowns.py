@@ -168,3 +168,28 @@ def test_claimed_hours_by_job_drills_down_to_every_bar_and_its_total(app, params
         listed = app.client.post("/api/plans/drilldown", json={**view["request"], "group": bar["id"]}).json()
         assert listed["reproduces"] is True, bar["id"]
         assert listed["chart_total"] == bar["value"], bar["id"]
+
+
+@STATES
+def test_submission_timing_drills_down_to_every_segment_week_and_bin(app, params):
+    # Ticket #34: every chart is built from Explore plans, so each mark drills down through Explore's drilldown.
+    view = get(app, "/api/overview/submission-timing", **params)
+    weekly = view["weekly"]
+    requests = {series["status"]: series["request"] for series in weekly["series"]}
+
+    def drilled(request: dict, group: str | None) -> dict:
+        return app.client.post("/api/plans/drilldown", json={**request, "group": group}).json()
+
+    for week in weekly["weeks"]:
+        for segment in week["segments"]:
+            if segment["tickets"]:
+                listed = drilled(requests[segment["status"]], week["id"])
+                assert listed["reproduces"] is True and listed["chart_total"] == segment["tickets"], (week["id"], segment)
+        assert drilled(weekly["all"]["request"], week["id"])["chart_total"] == week["total"], week["id"]
+    for key in ("lag", "interval"):
+        chart = view[key]
+        assert drilled(chart["request"], None)["reproduces"] is True, key
+        for group in chart["result"]["result"]["groups"]:
+            if group["value"]:
+                listed = drilled(chart["request"], group["id"])
+                assert listed["reproduces"] is True and listed["chart_total"] == group["value"], (key, group["id"])

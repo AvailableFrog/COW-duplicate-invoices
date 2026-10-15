@@ -135,6 +135,111 @@ export function horizontalBar(input: HorizontalBarInput): TopLevelSpec {
   };
 }
 
+/** Current Approval Status colours: teal, amber and grey, never green, so no status reads as paid. */
+export const STATUS_COLOURS: Readonly<Record<string, string>> = {
+  Approved: CHART_COLOURS.accent,
+  Pending: CHART_COLOURS.unresolved,
+  Rejected: CHART_COLOURS.muted,
+};
+
+export interface WeekColumn {
+  key: string;
+  /** Short enough for the axis, such as "7 Sep"; the full label belongs in the description and table. */
+  label: string;
+  total: number;
+}
+
+/** One stacked segment: `key` is "<week key>|<status>", which the chart reports when the segment is clicked. */
+export interface WeekSegment {
+  key: string;
+  week: string;
+  status: string;
+  value: number;
+}
+
+export interface StackedWeekInput {
+  description: string;
+  weeks: readonly WeekColumn[];
+  /** Bottom to top; each has a colour in STATUS_COLOURS and a name in the legend. */
+  statuses: readonly string[];
+  segments: readonly WeekSegment[];
+  selectable?: boolean;
+}
+
+/**
+ * Vertical bars, one per week in date order, stacked by current status from a zero baseline, with each
+ * week's total printed above it. The caller shows the status legend in words beside the chart.
+ */
+export function stackedWeekBars(input: StackedWeekInput): TopLevelSpec {
+  const label = new Map(input.weeks.map((week) => [week.key, week.label]));
+  const values = input.segments
+    .filter((segment) => segment.value > 0)
+    .map((segment) => {
+      if (!Number.isFinite(segment.value)) throw new Error(`segment ${segment.key} needs a number`);
+      return {
+        key: segment.key,
+        week: label.get(segment.week) ?? segment.week,
+        status: segment.status,
+        value: segment.value,
+        order: input.statuses.indexOf(segment.status),
+      };
+    });
+  const totals = input.weeks.map((week) => ({ week: week.label, total: week.total, tip: numberFormat.format(week.total) }));
+  const largest = Math.max(1, ...input.weeks.map((week) => week.total));
+  const x = {
+    field: "week",
+    type: "ordinal" as const,
+    sort: input.weeks.map((week) => week.label),
+    title: "Week starting",
+    axis: { labelAngle: 0, labelColor: CHART_COLOURS.ink, titleColor: CHART_COLOURS.muted, labelFontSize: 12, ticks: false },
+  };
+  const y = {
+    type: "quantitative" as const,
+    scale: { zero: true, nice: false, domainMin: 0, domainMax: largest * 1.15 },
+    axis: { labelColor: CHART_COLOURS.ink, titleColor: CHART_COLOURS.muted, gridColor: "#e7e4de", tickCount: 5 },
+    title: "Tickets",
+  };
+  return {
+    description: input.description,
+    width: "container",
+    height: 260,
+    background: "transparent",
+    layer: [
+      {
+        data: { values },
+        mark: { type: "bar", cursor: input.selectable ? "pointer" : "default", stroke: "#ffffff", strokeWidth: 1 },
+        encoding: {
+          x,
+          y: { ...y, field: "value", stack: "zero" },
+          color: {
+            field: "status",
+            type: "nominal",
+            scale: { domain: [...input.statuses], range: input.statuses.map((status) => STATUS_COLOURS[status] ?? CHART_COLOURS.muted) },
+            // The page names every status beside the chart, so the chart carries no second legend.
+            legend: null,
+          },
+          order: { field: "order", type: "quantitative" },
+          tooltip: [
+            { field: "week", type: "nominal", title: "Submitted" },
+            { field: "status", type: "nominal", title: "Current status" },
+            { field: "value", type: "quantitative", title: "Tickets", format: "," },
+          ],
+        },
+      },
+      {
+        data: { values: totals },
+        mark: { type: "text", baseline: "bottom", dy: -4, fontSize: 12, color: CHART_COLOURS.ink, aria: false },
+        encoding: { x, y: { ...y, field: "total" }, text: { field: "tip", type: "nominal" } },
+      },
+    ],
+    config: {
+      font: FONT,
+      view: { stroke: null },
+      axis: { labelFont: FONT, titleFont: FONT },
+    },
+  };
+}
+
 // Data URLs, expressions and transforms: the service computes every number, so a chart only draws rows.
 const FORBIDDEN_KEYS = new Set(["url", "expr", "calculate", "signal", "test", "filter", "params", "transform"]);
 
