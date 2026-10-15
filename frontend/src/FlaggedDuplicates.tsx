@@ -1,18 +1,12 @@
 import { useState } from "react";
 
-import type { Counterpart, CounterpartStatusId, FlaggedDuplicate, FlaggedDuplicatesResponse, Member } from "./api";
+import type { Counterpart, CounterpartStatusId, FlaggedDuplicate, FlaggedDuplicatesResponse } from "./api";
+import { sourceState } from "./ReviewPriorities";
 
 /** Opens the drawer for a flagged duplicate; `opener` gets focus back when the drawer closes. */
 export type OpenFlagged = (item: FlaggedDuplicate, opener: HTMLButtonElement) => void;
 
 type Shown = "all" | CounterpartStatusId;
-
-function sourceState(member: Member): string {
-  const status = member.status ?? "Unknown status";
-  const keyed = member.keyed === null ? "Keyed unknown" : member.keyed ? "Keyed" : "not Keyed";
-  const job = member.job_number === null ? "no usable job" : `Job ${member.job_number}`;
-  return `${status}, ${keyed}, ${job}`;
-}
 
 /** The relationship in words: found (uncertain when every counterpart is) or unresolved. */
 function relationship(item: FlaggedDuplicate): string {

@@ -208,6 +208,11 @@ def create_app(state: AppState) -> FastAPI:
         except MetricError as error:
             raise HTTPException(status_code=422, detail=error.payload()) from error
 
+    def saved_outcome(saved: dict, excel_rows: list[int]) -> dict:
+        """A pair's saved Review Outcome label, Not reviewed when none was saved."""
+        record = saved.get(pair_key(*excel_rows))
+        return record["outcome"] if record else outcome_label("not_reviewed")
+
     def with_outcomes(fingerprint: str, item: dict, saved: dict | None = None) -> dict:
         """A possible duplicate whose Candidates each carry their pair's Review Outcome, Not reviewed by default.
 
@@ -215,12 +220,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         saved = state.review.outcomes(fingerprint) if saved is None else saved
         candidates = [
-            {
-                **candidate,
-                "outcome": saved[pair_key(*candidate["excel_rows"])]["outcome"]
-                if pair_key(*candidate["excel_rows"]) in saved else outcome_label("not_reviewed"),
-            }
-            for candidate in item["candidates"]
+            {**candidate, "outcome": saved_outcome(saved, candidate["excel_rows"])} for candidate in item["candidates"]
         ]
         return {**item, "candidates": candidates}
 
@@ -325,8 +325,7 @@ def create_app(state: AppState) -> FastAPI:
         entries = state.store.flagged_duplicates(fingerprint, filters, state.review.settled_pairs(fingerprint))
         for entry in entries:
             for counterpart in entry["counterparts"]:
-                record = saved.get(pair_key(*counterpart["excel_rows"]))
-                counterpart["outcome"] = record["outcome"] if record else outcome_label("not_reviewed")
+                counterpart["outcome"] = saved_outcome(saved, counterpart["excel_rows"])
         return {
             "flagged_duplicates": entries,
             "counts": flagged.counts(entries),

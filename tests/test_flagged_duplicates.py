@@ -370,15 +370,18 @@ def test_a_confirmed_alias_widens_both_rules(tmp_path):
         ticket(4, Employee="Mariocollymore", Date=ticket()["Date"].replace(day=27), Job_Work_Pay=20),
     ])
 
+    widened = ("flagged_duplicate_counterpart", "repeated_component")
+    decision = {
+        "labels": ["Mario Collymore", "Mariocollymore"], "decision": "confirmed", "reviewer": "Test",
+        "rationale": "Same person",
+    }
+
     with running(workbook, tmp_path) as booted:
         fingerprint = fingerprint_of(booted)
-        before = {rule: verdict(booted, 4, 5, rule, fingerprint)["matched"] for rule in ("flagged_duplicate_counterpart", "repeated_component")}
-        response = booted.client.put(
-            f"/api/snapshots/{fingerprint}/aliases",
-            json={"labels": ["Mario Collymore", "Mariocollymore"], "decision": "confirmed", "reviewer": "Test", "rationale": "Same person"},
-        )
+        before = {rule: verdict(booted, 4, 5, rule, fingerprint)["matched"] for rule in widened}
+        response = booted.client.put(f"/api/snapshots/{fingerprint}/aliases", json=decision)
         assert response.status_code == 200, response.text
-        after = {rule: verdict(booted, 4, 5, rule, fingerprint)["matched"] for rule in ("flagged_duplicate_counterpart", "repeated_component")}
+        after = {rule: verdict(booted, 4, 5, rule, fingerprint)["matched"] for rule in widened}
         listed = flagged(booted)
 
     assert before == {"flagged_duplicate_counterpart": False, "repeated_component": False}

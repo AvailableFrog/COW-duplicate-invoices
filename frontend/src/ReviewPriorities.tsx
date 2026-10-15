@@ -10,7 +10,7 @@ function reviewSummary(item: PossibleDuplicate): string | null {
 }
 
 /** One ticket's source state in words; a blank Keyed or status stays visible as unknown. */
-function sourceState(member: Member): string {
+export function sourceState(member: Member): string {
   const status = member.status ?? "Unknown status";
   const keyed = member.keyed === null ? "Keyed unknown" : member.keyed ? "Keyed" : "not Keyed";
   const job = member.job_number === null ? "no usable job" : `Job ${member.job_number}`;

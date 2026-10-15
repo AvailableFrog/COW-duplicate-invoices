@@ -79,10 +79,10 @@ def view(
     entries = []
     for ticket in sorted((ticket for ticket in flagged if ticket["in_filter"]), key=rules.ticket_order):
         row = ticket["excel_row"]
-        counterparts = [
-            _counterpart(candidate, members, settled_pairs, row)
-            for candidate in sorted(links.get(row, []), key=lambda c: c.first_row + c.second_row - row)
-        ]
+        counterparts = sorted(
+            (_counterpart(candidate, members, settled_pairs, row) for candidate in links.get(row, [])),
+            key=lambda counterpart: counterpart["excel_row"],
+        )
         status = COUNTERPART_FOUND if counterparts else UNRESOLVED
         entries.append({
             **ticket,
