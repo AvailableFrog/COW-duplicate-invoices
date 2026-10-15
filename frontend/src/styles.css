@@ -880,6 +880,25 @@ input[type="date"]:focus-within {
   }
 }
 
+/* Phone width (ticket #38): one column, and fields that shrink to it instead of their intrinsic width. */
+.review-fields label {
+  min-width: 0;
+}
+
+.review-fields input,
+.review-fields textarea,
+.review-fields select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+@media (max-width: 600px) {
+  .review-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .form-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1971,5 +1990,14 @@ input[type="date"]:focus-within {
   width: 12px;
   height: 12px;
   border-radius: 2px;
+}
+
+/* Phone width (ticket #38): the drawer takes the whole screen; the 32 px strip that shows the page behind it
+   on wider screens would only take reading width away. */
+@media (max-width: 600px) {
+  .drawer {
+    width: 100vw;
+    border-left: none;
+  }
 }
 

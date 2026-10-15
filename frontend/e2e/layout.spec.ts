@@ -12,7 +12,7 @@ import type { Page } from "@playwright/test";
 import { REPO_ROOT, expect, test } from "./app";
 
 const PETER = "Possible duplicate L225526+L225761";
-const WIDTHS = [1440, 1024];
+const WIDTHS = [1440, 1024, 390];
 const SHOTS = process.env.LTA_SCREENSHOTS === "1" ? join(REPO_ROOT, "docs", "screenshots") : null;
 
 async function shoot(page: Page, name: string): Promise<void> {
