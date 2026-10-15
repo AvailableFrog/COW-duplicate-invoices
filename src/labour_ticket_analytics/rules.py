@@ -31,7 +31,7 @@ import duckdb
 
 from labour_ticket_analytics.timeparse import TimeParse, compare
 
-RULE_VERSION = "1.2.0"
+RULE_VERSION = "1.3.0"
 
 # The Strict repeat key: source field -> normalized column. Never ID, Ticket
 # Number, timestamps, supervisor or description, which can differ between
@@ -130,9 +130,47 @@ AMBIGUOUS_PERIOD_COMPARISON = Rule(
     ),
 )
 
+# A flagged duplicate's job was changed to 0, so its current Job Number is never compared, and no job is
+# recovered from Job Name. Every plausible counterpart gets its own Candidate; none is chosen as the original.
+# Matched only through the same unresolved Time text and description, a Candidate is an uncertain
+# counterpart, with weak evidence (UNCERTAIN_COUNTERPART_STRENGTH), as in K.
+FLAGGED_DUPLICATE_COUNTERPART = Rule(
+    id="flagged_duplicate_counterpart",
+    label="Flagged-duplicate counterpart",
+    pattern="Possible correction or resubmission",
+    evidence_strength="moderate",
+    fields_compared=(
+        "Employee", "Date", "Regular Hours", "Overtime", "Double Time", "Job Work Pay", "Time",
+        "Description of Job Work",
+    ),
+    reason=(
+        "A flagged duplicate and a possible counterpart: one ticket was approved with Job Number 0, and the other"
+        " is for the same employee and date with the same four hour and pay amounts, the same work periods, or"
+        " (an uncertain counterpart) the same unresolved Time text and description. The current Job Number is not"
+        " compared, and no counterpart is chosen as the original."
+    ),
+    accepts_alias=True,
+)
+REPEATED_COMPONENT = Rule(
+    id="repeated_component",
+    label="Repeated component",
+    pattern="Repeated payment component",
+    evidence_strength="weak",
+    fields_compared=("Employee", "Date", "Job Number", "Job Work Pay"),
+    reason=(
+        "Same task payment on both: equal positive Job Work Pay on the same day, on the same job or beside Job"
+        " Number 0. A low-confidence component comparison: it compares one payment component, not the whole ticket."
+    ),
+    accepts_alias=True,
+)
+UNCERTAIN_COUNTERPART_STRENGTH = "weak"
+
 RULES: dict[str, Rule] = {
     rule.id: rule
-    for rule in (STRICT_REPEAT, TIME_TEXT_VARIANT, NAME_SPACE_VARIANT, WORK_PERIOD_CONFLICT, AMBIGUOUS_PERIOD_COMPARISON)
+    for rule in (
+        STRICT_REPEAT, TIME_TEXT_VARIANT, NAME_SPACE_VARIANT, WORK_PERIOD_CONFLICT, AMBIGUOUS_PERIOD_COMPARISON,
+        FLAGGED_DUPLICATE_COUNTERPART, REPEATED_COMPONENT,
+    )
 }
 
 # A Ticket taking part in at least one Candidate; `t` is a ticket_values row.
@@ -176,6 +214,8 @@ class PairTicket:
     values: dict[str, Any]  # source field -> normalized value (None when blank or invalid), for every STRICT_KEY field
     time: TimeParse
     name: str | None = None  # the Employee as written, for reasons in words; never compared
+    flagged: bool = False  # a flagged duplicate: Approved with Job Number 0 (metrics.FLAGGED_DUPLICATE_SCOPE)
+    description: str | None = None  # Description of Job Work after trim, case-fold and whitespace collapse
 
 
 def alias_key(first_label: str, second_label: str) -> tuple[str, str]:
@@ -236,11 +276,16 @@ class Verdict:
     matched: bool
     reason: str
     pattern: str | None = None  # when the match illustrates another pattern than its rule's
+    evidence_strength: str | None = None  # when this match's evidence is weaker than its rule's usual
+
+    @property
+    def strength(self) -> str:
+        return self.evidence_strength or self.rule.evidence_strength
 
     def candidate(self, first: PairTicket, second: PairTicket) -> Candidate:
         rule = self.rule
         return Candidate(
-            rule.id, first.excel_row, second.excel_row, rule.fields_compared, rule.evidence_strength, self.reason,
+            rule.id, first.excel_row, second.excel_row, rule.fields_compared, self.strength, self.reason,
             self.pattern or rule.pattern,
         )
 
@@ -249,7 +294,7 @@ class Verdict:
             "rule_id": self.rule.id,
             "rule_label": self.rule.label,
             "matched": self.matched,
-            "evidence_strength": self.rule.evidence_strength,
+            "evidence_strength": self.strength,
             "fields_compared": list(self.rule.fields_compared),
             "reason": self.reason,
         }
@@ -274,17 +319,21 @@ def pair_tickets(
     connection: duckdb.DuckDBPyConnection, fingerprint: str, parses: dict[int, TimeParse], rows: list[int] | None = None,
 ) -> dict[int, PairTicket]:
     """The comparable values of a Snapshot's Tickets (or only `rows`), by Excel row."""
+    # Imported here: metrics reads the strict key from this module, and owns the flagged-duplicate predicate.
+    from labour_ticket_analytics.metrics import FLAGGED_DUPLICATE_SCOPE
+
     query = (
-        f"SELECT excel_row, employee_name, {', '.join(STRICT_KEY.values())} FROM ticket_values"
-        " WHERE snapshot_fingerprint = $fingerprint"
+        f"SELECT t.excel_row, t.employee_name, COALESCE({FLAGGED_DUPLICATE_SCOPE}, false), t.description_key,"
+        f" {', '.join(f't.{column}' for column in STRICT_KEY.values())}"
+        " FROM ticket_values t WHERE t.snapshot_fingerprint = $fingerprint"
     )
     parameters: dict[str, Any] = {"fingerprint": fingerprint}
     if rows is not None:
-        query += " AND list_contains($rows, excel_row)"
+        query += " AND list_contains($rows, t.excel_row)"
         parameters["rows"] = rows
     return {
-        row[0]: PairTicket(row[0], dict(zip(STRICT_KEY, row[2:])), parses[row[0]], row[1])
-        for row in connection.execute(query + " ORDER BY excel_row", parameters).fetchall()
+        row[0]: PairTicket(row[0], dict(zip(STRICT_KEY, row[4:])), parses[row[0]], row[1], row[2], row[3])
+        for row in connection.execute(query + " ORDER BY t.excel_row", parameters).fetchall()
     }
 
 
@@ -307,21 +356,26 @@ def verdicts(first: PairTicket, second: PairTicket, aliases: Aliases = NO_ALIASE
 
     When the whole claim repeats (a Strict repeat, Time-text variant or
     Name-space variant), the pair's overlap is part of that repeat, so its
-    Work-period conflict takes the repeat's pattern and adds no "Possible
-    correction or resubmission".
+    Work-period conflict and Flagged-duplicate counterpart take the repeat's
+    pattern and add no "Possible correction or resubmission".
     """
     relation = employee_relation(first, second, aliases)
-    strict, variant, name, conflict, ambiguous = (
+    strict, variant, name, conflict, ambiguous, counterpart, component = (
         _strict_repeat(first, second),
         _time_text_variant(first, second, relation),
         _name_space_variant(first, second),
         _work_period_conflict(first, second, relation),
         _ambiguous_period_comparison(first, second, relation),
+        _flagged_duplicate_counterpart(first, second, relation),
+        _repeated_component(first, second, relation),
     )
     repeat = next((verdict for verdict in (strict, variant, name) if verdict.matched), None)
-    if conflict.matched and repeat is not None:
-        conflict = replace(conflict, pattern=repeat.rule.pattern)
-    return [strict, variant, name, conflict, ambiguous]
+    if repeat is not None:
+        conflict, counterpart = (
+            replace(verdict, pattern=repeat.rule.pattern) if verdict.matched else verdict
+            for verdict in (conflict, counterpart)
+        )
+    return [strict, variant, name, conflict, ambiguous, counterpart, component]
 
 
 def explain(first: PairTicket, second: PairTicket, aliases: Aliases = NO_ALIASES) -> dict[str, Any]:
@@ -534,6 +588,127 @@ def _ambiguous_period_comparison(first: PairTicket, second: PairTicket, relation
     )
 
 
+def _flagged_duplicate_counterpart(first: PairTicket, second: PairTicket, relation: str) -> Verdict:
+    """A flagged duplicate and a Ticket it may repeat, on any job: the same claim components, the same Confident
+    Intervals, or (uncertain) the same unresolved Time text and the same description.
+
+    One employee label, or two joined by a confirmed Alias.
+    """
+    rule = FLAGGED_DUPLICATE_COUNTERPART
+    if not (first.flagged or second.flagged):
+        return Verdict(
+            rule, False, "Not a flagged-duplicate counterpart: neither ticket is a flagged duplicate (Approved with"
+            " Job Number 0).",
+        )
+    if relation not in ONE_EMPLOYEE:
+        return Verdict(
+            rule, False, "Not compared as a counterpart: the employee labels differ and no confirmed Alias joins them.",
+        )
+    claim = _unequal(first, second, CLAIM_FIELDS)
+    periods = first.time.status == second.time.status == "confident" and (
+        first.time.confident_intervals() == second.time.confident_intervals()
+    )
+    unresolved = _same_unresolved_text(first, second)
+    conditions = []
+    if claim is None:
+        conditions.append("the same four hour and pay amounts")
+    if periods:
+        conditions.append(f"the same work periods ({_intervals(first.time.confident_intervals())})")
+    if unresolved is None:
+        conditions.append(
+            f"the same Time text “{first.time.raw_value}” and the same description once case and spacing are ignored"
+        )
+    if not conditions:
+        return Verdict(
+            rule, False,
+            f"Not a flagged-duplicate counterpart: {claim}, the work periods are not the same Confident Intervals,"
+            f" and {unresolved}.",
+        )
+    flagged = (
+        "both tickets are flagged duplicates" if first.flagged and second.flagged
+        else f"the ticket at row {(first if first.flagged else second).excel_row} is a flagged duplicate"
+    )
+    alias = f" under the confirmed Alias “{first.name}” / “{second.name}”" if relation == "confirmed_alias" else ""
+    caveat = (
+        (f" {_unresolved_reading(first.time)}" if unresolved is None else "")
+        + " Its current Job Number is not compared, because a flagged duplicate's job was changed to 0, and no job is"
+        " recovered from Job Name; other tickets may be counterparts too, and none is chosen as the original."
+    )
+    if claim is not None and not periods:
+        return Verdict(
+            rule, True,
+            f"Uncertain counterpart: {flagged} (Approved with Job Number 0), and the other ticket has the same"
+            f" date{alias}, {conditions[0]}, though {claim}.{caveat}",
+            evidence_strength=UNCERTAIN_COUNTERPART_STRENGTH,
+        )
+    return Verdict(
+        rule, True,
+        f"Flagged duplicate and a possible counterpart: {flagged} (Approved with Job Number 0), and the other ticket"
+        f" has the same date{alias} with {_listed(conditions)}.{caveat}",
+    )
+
+
+def _same_unresolved_text(first: PairTicket, second: PairTicket) -> str | None:
+    """Why the two Tickets do not share nonempty Time text without a confident reading and a nonempty description.
+
+    None when they do: the Time is text on both, identical after trimming,
+    case and spacing, and does not read as Confident Intervals; and the
+    descriptions are identical after the same normalization.
+    """
+    time = first.values["Time"]
+    if first.time.raw_type != "str" or time is None or time != second.values["Time"]:
+        return "the Time texts are not the same nonempty text"
+    if first.time.status == "confident":
+        return "the Time text reads confidently, so its work periods are compared instead"
+    if first.description is None or first.description != second.description:
+        return "the descriptions are not the same nonempty text"
+    return None
+
+
+def _unresolved_reading(parse: TimeParse) -> str:
+    """Why a Time text without Confident Intervals leaves the counterpart uncertain, in a sentence."""
+    why = {
+        "ambiguous": "has no AM/PM on at least one time, so its reading is unresolved and only an assumption could"
+        " place it",
+        "flagged": "has a period flagged and not repaired, so its reading is unresolved",
+    }.get(parse.status, "could not be read as work periods, so its reading is unresolved")
+    return f"The Time {why}: whether both tickets describe the same work periods cannot be established."
+
+
+def _repeated_component(first: PairTicket, second: PairTicket, relation: str) -> Verdict:
+    """Equal positive Job Work Pay on the same day, on the same nonzero job or beside Job Number 0.
+
+    One employee label, or two joined by a confirmed Alias. Low confidence: one
+    payment component, never the whole claim.
+    """
+    rule = REPEATED_COMPONENT
+    if relation not in ONE_EMPLOYEE:
+        return Verdict(
+            rule, False, "Not compared for a task payment: the employee labels differ and no confirmed Alias joins them.",
+        )
+    pay, jobs = first.values["Job Work Pay"], (first.values["Job Number"], second.values["Job Number"])
+    problem = _unequal(first, second, ("Job Work Pay",))
+    if problem is None and pay <= 0:
+        problem = "Job Work Pay is not positive"
+    if problem is None and None in jobs:
+        problem = "Job Number is blank or unusable on a ticket"
+    if problem is None and jobs[0] != jobs[1] and 0 not in jobs:
+        problem = "the jobs differ and neither ticket is on Job Number 0"
+    if problem:
+        return Verdict(rule, False, f"Not a repeated component: {problem}.")
+    if jobs == (0, 0):
+        where = " with Job Number 0 on both tickets"
+    else:
+        where = f" on the same job ({jobs[0]})" if jobs[0] == jobs[1] else " with Job Number 0 on one ticket"
+    alias = f" under the confirmed Alias “{first.name}” / “{second.name}”" if relation == "confirmed_alias" else ""
+    return Verdict(
+        rule, True,
+        f"Same task payment on both: Job Work Pay {pay:.2f} on each ticket on the same day{alias}{where}. A"
+        " low-confidence component comparison: it compares one payment component, not the whole ticket, so it does"
+        " not show that the claim was made twice.",
+    )
+
+
 def _one_label(relation: str) -> str | None:
     """Why a rule that compares one employee label does not apply, or None when the labels are the same."""
     if relation == "same_label":
@@ -648,27 +823,52 @@ TIERS = (
     Tier(1, "approved_keyed_exact_repeat", "Exact repeat, not flagged: every ticket Approved and Keyed"),
     Tier(2, "approved_beside_unfinished", "Approved beside Pending or not Keyed, or Approved and Keyed without an exact repeat"),
     Tier(3, "pending_or_flagged", "Pending conflict, or a flagged duplicate whose counterpart is unresolved"),
-    Tier(4, "includes_rejected", "Includes a Rejected ticket or an unreadable status"),
+    Tier(
+        4, "includes_rejected",
+        "Includes a Rejected ticket or an unreadable status, or a flagged duplicate whose counterpart a reviewer settled",
+    ),
 )
 
 
-def tier(members: list[dict[str, Any]], candidates: list[Candidate]) -> Tier:
-    """Which review-priority tier a Possible Duplicate falls in, from its evidence and members' source states.
+def settled_rows(candidates: Iterable[Candidate], settled_pairs: Iterable[tuple[int, int]]) -> set[int]:
+    """The Tickets whose flagged-duplicate counterpart relationship a reviewer settled.
 
-    No Review Outcomes exist yet, so every flagged duplicate's counterpart
-    counts as unresolved. Only the Strict repeat rule gives strong evidence,
-    so tier 1 holds exact repeats alone; Approved and Keyed Tickets linked
-    only by a weaker rule fall to tier 2.
+    A flagged duplicate's counterpart is resolved only when a Flagged-duplicate
+    counterpart Candidate links it to a Ticket and a reviewer settled that very
+    pair (`settled_pairs`, Excel rows lower first: a Confirmed duplicate or
+    Replacement ticket outcome, or a kept/replaced link). Any other rule's
+    pair, or a counterpart nobody reviewed, leaves it unresolved.
+    """
+    settled = set(settled_pairs)
+    return {
+        row
+        for candidate in candidates
+        if candidate.rule_id == FLAGGED_DUPLICATE_COUNTERPART.id and (candidate.first_row, candidate.second_row) in settled
+        for row in (candidate.first_row, candidate.second_row)
+    }
+
+
+def tier(
+    members: list[dict[str, Any]], candidates: list[Candidate], settled_pairs: Iterable[tuple[int, int]] = (),
+) -> Tier:
+    """Which review-priority tier a Possible Duplicate falls in, from its evidence, members' source states and
+    whether a reviewer settled its flagged duplicates' counterparts.
+
+    Only the Strict repeat rule gives strong evidence, so tier 1 holds exact
+    repeats alone; Approved and Keyed Tickets linked only by a weaker rule
+    fall to tier 2. A flagged duplicate whose counterpart is unresolved puts
+    its possible duplicate in tier 3; once every flagged duplicate in it is
+    settled, it is a recorded disposition like a rejection, so tier 4.
     """
     statuses = {member["status"] for member in members}
-    flagged = any(member["flagged_duplicate"] for member in members)
+    flagged = [member["excel_row"] for member in members if member["flagged_duplicate"]]
     strong = any(candidate.evidence_strength == "strong" for candidate in candidates)
     approved_keyed = all(member["status"] == "Approved" and member["keyed"] is True for member in members)
     if strong and approved_keyed and not flagged:
         return TIERS[0]
-    if flagged:
+    if set(flagged) - settled_rows(candidates, settled_pairs):
         return TIERS[2]
-    if "Rejected" in statuses or None in statuses:
+    if flagged or "Rejected" in statuses or None in statuses:
         return TIERS[3]
     if "Approved" in statuses:
         return TIERS[1]
@@ -733,12 +933,18 @@ def ticket_order(member: dict[str, Any]) -> tuple[bool, str, int]:
     return (member["ticket_number"] is None, member["ticket_number"] or "", member["excel_row"])
 
 
-def possible_duplicate(candidates: list[Candidate], members: dict[int, dict[str, Any]]) -> dict[str, Any]:
-    """One connected component as the Review priorities list shows it, before ranking."""
+def possible_duplicate(
+    candidates: list[Candidate], members: dict[int, dict[str, Any]], settled_pairs: Iterable[tuple[int, int]] = (),
+) -> dict[str, Any]:
+    """One connected component as the Review priorities list shows it, before ranking.
+
+    `settled_pairs` are the Ticket pairs a reviewer settled (see settled_rows),
+    which only ever move a possible duplicate out of tier 3.
+    """
     rows = sorted({row for candidate in candidates for row in (candidate.first_row, candidate.second_row)})
     member_list = sorted((members[row] for row in rows), key=ticket_order)
     rule_ids = sorted({candidate.rule_id for candidate in candidates})
-    priority_tier = tier(member_list, candidates)
+    priority_tier = tier(member_list, candidates, settled_pairs)
     return {
         "display_id": display_id(member_list),
         "tier": priority_tier.payload(),

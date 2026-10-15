@@ -4,6 +4,7 @@ import {
   ApiError,
   fetchEvidence,
   fetchPairExplanation,
+  fetchTicketEvidence,
   type Annotation,
   type EvidenceCandidate,
   type EvidenceMember,
@@ -12,6 +13,7 @@ import {
   type PairExplanation,
   type ShownEvidence,
   type SourceCell,
+  type TicketEvidence,
   type TimeComparison,
   type TimeParse,
 } from "./api";
@@ -19,13 +21,17 @@ import { ReviewPanel } from "./ReviewPanel";
 
 /**
  * What the drawer was opened on: a possible duplicate by one member Ticket (never its display name),
- * or any two Tickets to compare, linked or not.
+ * any two Tickets to compare, linked or not, or one Ticket on its own (a flagged duplicate no rule links).
  */
 export type DrawerTarget =
   | { kind: "possible_duplicate"; fingerprint: string; excelRow: number; displayId: string }
-  | { kind: "pair"; fingerprint: string; rows: [number, number] };
+  | { kind: "pair"; fingerprint: string; rows: [number, number] }
+  | { kind: "ticket"; fingerprint: string; excelRow: number; title: string };
 
-type Loaded = { kind: "possible_duplicate"; data: EvidenceResponse } | { kind: "pair"; data: PairExplanation };
+type Loaded =
+  | { kind: "possible_duplicate"; data: EvidenceResponse }
+  | { kind: "pair"; data: PairExplanation }
+  | { kind: "ticket"; data: TicketEvidence };
 
 interface EvidenceDrawerProps {
   target: DrawerTarget | null;
@@ -301,6 +307,26 @@ function PairEvidence({ data }: { data: PairExplanation }) {
   );
 }
 
+/** One Ticket on its own: why it is shown alone, then the same evidence as any other set of Tickets. */
+function SingleTicketEvidence({ data }: { data: TicketEvidence }) {
+  const [member] = data.members;
+  return (
+    <>
+      <section aria-labelledby="drawer-why">
+        <h3 id="drawer-why">Why this ticket is shown on its own</h3>
+        <p className="drawer-reason">
+          {member.flagged_duplicate ? "Staff flagged this ticket as a duplicate (Approved with Job Number 0). " : ""}
+          {data.possible_duplicate
+            ? `It is in ${data.possible_duplicate}.`
+            : "No matching rule links it to another ticket, so it is in no possible duplicate and its counterpart is unresolved."}
+        </p>
+      </section>
+
+      <SharedEvidence data={data} />
+    </>
+  );
+}
+
 /** Annotations, timeline, source rows, Time as parsed and provenance: shown for any set of Tickets. */
 function SharedEvidence({ data }: { data: ShownEvidence }) {
   const [showWhitespace, setShowWhitespace] = useState(false);
@@ -358,7 +384,9 @@ function SharedEvidence({ data }: { data: ShownEvidence }) {
         </div>
         <p className="muted">
           All {data.fields.length} columns as imported.{" "}
-          {differing === 0
+          {data.members.length === 1
+            ? ""
+            : differing === 0
             ? "No value differs between the tickets."
             : `${differing} ${differing === 1 ? "field differs" : "fields differ"}, marked Differs: ${data.differing_fields.join(", ")}.`}
           {showWhitespace ? " Text is quoted; · is a space, → a tab, ↵ a line break. The values are unchanged." : ""}
@@ -460,10 +488,15 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
             kind: "pair",
             data,
           }))
-        : fetchEvidence(target.fingerprint, target.excelRow, filters, controller.signal).then((data) => ({
-            kind: "possible_duplicate",
-            data,
-          }));
+        : target.kind === "ticket"
+          ? fetchTicketEvidence(target.fingerprint, target.excelRow, filters, controller.signal).then((data) => ({
+              kind: "ticket",
+              data,
+            }))
+          : fetchEvidence(target.fingerprint, target.excelRow, filters, controller.signal).then((data) => ({
+              kind: "possible_duplicate",
+              data,
+            }));
     load
       .then((loaded) => setState({ kind: "ready", target, loaded }))
       .catch((error: unknown) => {
@@ -500,10 +533,16 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
               <p className="eyebrow">
                 {target.kind === "pair"
                   ? "Two tickets compared"
-                  : `Possible duplicate${loaded?.kind === "possible_duplicate" ? ` · priority ${loaded.data.tier.rank}: ${loaded.data.tier.label}` : ""}`}
+                  : target.kind === "ticket"
+                    ? "One ticket"
+                    : `Possible duplicate${loaded?.kind === "possible_duplicate" ? ` · priority ${loaded.data.tier.rank}: ${loaded.data.tier.label}` : ""}`}
               </p>
               <h2 id="drawer-title">
-                {target.kind === "pair" ? `Excel rows ${target.rows[0]} and ${target.rows[1]}` : target.displayId}
+                {target.kind === "pair"
+                  ? `Excel rows ${target.rows[0]} and ${target.rows[1]}`
+                  : target.kind === "ticket"
+                    ? target.title
+                    : target.displayId}
               </h2>
               {who ? (
                 <p className="muted">
@@ -527,11 +566,12 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
                 The evidence could not be loaded: {state.message}.{" "}
                 {target.kind === "pair"
                   ? "Check both Excel rows and compare again; if it still fails, reload the page."
-                  : "Close the drawer and open the possible duplicate again; if it still fails, reload the page."}
+                  : "Close the drawer and open it again; if it still fails, reload the page."}
               </p>
             ) : null}
             {loaded?.kind === "possible_duplicate" ? <Evidence data={loaded.data} onReviewChange={reviewChanged} /> : null}
             {loaded?.kind === "pair" ? <PairEvidence data={loaded.data} /> : null}
+            {loaded?.kind === "ticket" ? <SingleTicketEvidence data={loaded.data} /> : null}
           </div>
         </>
       ) : null}

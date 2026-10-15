@@ -23,7 +23,7 @@ from typing import Any, Iterable
 
 import duckdb
 
-from labour_ticket_analytics import evidence, metrics, normalized, rules
+from labour_ticket_analytics import evidence, flagged, metrics, normalized, rules
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DATE_BASES, Filters
 from labour_ticket_analytics.timeparse import TimeParse, parse_time
@@ -404,19 +404,53 @@ class SnapshotStore:
             "jobs": [{"job_number": job, "job_name": name, "tickets": count} for job, name, count in jobs],
         }
 
-    def possible_duplicates(self, fingerprint: str, filters: Filters) -> list[dict[str, Any]]:
+    def possible_duplicates(
+        self, fingerprint: str, filters: Filters, settled_pairs: set[tuple[int, int]] = frozenset(),
+    ) -> list[dict[str, Any]]:
         """The Possible Duplicates with any member inside the filters, recomposed from Candidates and ranked.
 
         Every member stays listed, marked in or out of the filters, so a
-        comparison is never truncated.
+        comparison is never truncated. `settled_pairs` are the Ticket pairs a
+        reviewer settled, which the tiers read (rules.settled_rows).
         """
         with self._lock:
             candidates = self._candidates(fingerprint)
             members = self._candidate_members(fingerprint, filters)
-        composed = [rules.possible_duplicate(component, members) for component in rules.compose(candidates)]
+        composed = [
+            rules.possible_duplicate(component, members, settled_pairs) for component in rules.compose(candidates)
+        ]
         return rules.ranked([item for item in composed if any(member["in_filter"] for member in item["members"])])
 
-    def possible_duplicate_evidence(self, fingerprint: str, excel_row: int, filters: Filters) -> dict[str, Any] | None:
+    def flagged_duplicates(
+        self, fingerprint: str, filters: Filters, settled_pairs: set[tuple[int, int]] = frozenset(),
+    ) -> list[dict[str, Any]]:
+        """Every flagged duplicate inside the filters with its counterparts and the possible duplicate holding it."""
+        with self._lock:
+            candidates = self._candidates(fingerprint)
+            members = self._candidate_members(fingerprint, filters)
+            tickets = self._members(fingerprint, filters, metrics.FLAGGED_DUPLICATE_SCOPE)
+        return flagged.view(tickets.values(), candidates, members, settled_pairs)
+
+    def ticket_evidence(self, fingerprint: str, excel_row: int, filters: Filters) -> dict[str, Any] | None:
+        """The evidence for one Ticket on its own, with the possible duplicate it is in, if any; None when unknown.
+
+        This is how a flagged duplicate that no rule links still opens in the
+        drawer.
+        """
+        with self._lock:
+            parses = self._time_parses.get(fingerprint)
+            if parses is None or excel_row not in parses:
+                return None
+            members = self._members(fingerprint, filters, "t.excel_row = $row", {"row": excel_row})
+            ticket = self._ticket(fingerprint, excel_row)
+            rows = self.possible_duplicate_rows(fingerprint, excel_row)
+            linked = self._candidate_members(fingerprint, filters)
+        display_id = rules.display_id([linked[row] for row in rows]) if rows else None
+        return evidence.ticket_evidence(members[excel_row], ticket, parses[excel_row], display_id, ANNOTATIONS)
+
+    def possible_duplicate_evidence(
+        self, fingerprint: str, excel_row: int, filters: Filters, settled_pairs: set[tuple[int, int]] = frozenset(),
+    ) -> dict[str, Any] | None:
         """The evidence for the Possible Duplicate holding a Ticket, or None when the Ticket is in none.
 
         Possible Duplicates are disjoint, so any member Ticket names exactly
@@ -433,7 +467,7 @@ class SnapshotStore:
             )
             if component is None:
                 return None
-            item = rules.possible_duplicate(component, self._candidate_members(fingerprint, filters))
+            item = rules.possible_duplicate(component, self._candidate_members(fingerprint, filters), settled_pairs)
             tickets = [self._ticket(fingerprint, member["excel_row"]) for member in item["members"]]
             parses = {member["excel_row"]: self._time_parses[fingerprint][member["excel_row"]] for member in item["members"]}
         return evidence.evidence(item, tickets, parses, ANNOTATIONS)

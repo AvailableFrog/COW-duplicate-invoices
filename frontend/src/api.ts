@@ -143,7 +143,7 @@ export interface Candidate {
   reason: string;
   /** The PRD pattern this match illustrates, usually its rule's. */
   pattern: string;
-  /** The Review Outcome saved on this Candidate's Ticket pair; Not reviewed when none. Display only, never a rank input. */
+  /** The Review Outcome saved on this Candidate's Ticket pair; Not reviewed when none. Settling a flagged duplicate's counterpart pair moves its tier; nothing else does. */
   outcome: OutcomeLabel;
 }
 
@@ -414,6 +414,44 @@ export interface PairExplanation extends Provenance, ShownEvidence {
   members: PairMember[];
 }
 
+/** One Ticket's evidence on its own, such as a flagged duplicate no rule links. */
+export interface TicketEvidence extends Provenance, ShownEvidence {
+  excel_row: number;
+  /** The display name of the possible duplicate this Ticket is in; null when it is in none. */
+  possible_duplicate: string | null;
+  members: PairMember[];
+}
+
+/** A Ticket the Flagged-duplicate counterpart rule links to a flagged duplicate; never chosen as the original. */
+export interface Counterpart extends Member {
+  excel_rows: [number, number];
+  /** False for an uncertain counterpart, found only through the same unresolved Time text and description. */
+  certain: boolean;
+  reason: string;
+  /** Whether a reviewer settled this pair: Confirmed duplicate, Replacement ticket or a kept/replaced link. */
+  settles: boolean;
+  outcome: OutcomeLabel;
+}
+
+export type CounterpartStatusId = "counterpart_found" | "unresolved";
+
+export interface FlaggedDuplicate extends Member {
+  counterpart_status: { id: CounterpartStatusId; label: string };
+  counterparts: Counterpart[];
+  /** A reviewer settled one of its counterpart pairs, so it no longer holds its possible duplicate in tier 3. */
+  settled_by_review: boolean;
+  possible_duplicate: { display_id: string; tier: PriorityTier } | null;
+}
+
+export interface FlaggedDuplicatesResponse extends Provenance {
+  flagged_duplicates: FlaggedDuplicate[];
+  counts: { flagged_duplicates: number; counterpart_found: number; unresolved: number };
+  counterpart_statuses: { id: CounterpartStatusId; label: string; definition: string }[];
+  metric_id: string;
+  note: string;
+  filters: FilterPayload;
+}
+
 /** A refused or failed request, with its HTTP status. */
 export class ApiError extends Error {
   constructor(
@@ -478,6 +516,24 @@ export function fetchEvidence(
 ): Promise<EvidenceResponse> {
   return getJson<EvidenceResponse>(
     `/api/snapshots/${encodeURIComponent(fingerprint)}/tickets/${excelRow}/possible-duplicate?${filterQuery(filters)}`,
+    signal,
+  );
+}
+
+/** Every flagged duplicate inside the filters, with counterpart found or unresolved. */
+export function fetchFlaggedDuplicates(filters: FilterState, signal?: AbortSignal): Promise<FlaggedDuplicatesResponse> {
+  return getJson<FlaggedDuplicatesResponse>(`/api/flagged-duplicates?${filterQuery(filters)}`, signal);
+}
+
+/** One Ticket's evidence on its own, addressed by its Snapshot and Excel row. */
+export function fetchTicketEvidence(
+  fingerprint: string,
+  excelRow: number,
+  filters: FilterState,
+  signal?: AbortSignal,
+): Promise<TicketEvidence> {
+  return getJson<TicketEvidence>(
+    `/api/snapshots/${encodeURIComponent(fingerprint)}/tickets/${excelRow}/evidence?${filterQuery(filters)}`,
     signal,
   );
 }

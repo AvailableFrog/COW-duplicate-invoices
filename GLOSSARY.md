@@ -32,6 +32,10 @@ _Avoid_: strict match, identical ticket, clear duplicate
 One link between two Tickets inside a Possible Duplicate, carrying the rule that found it and the fields compared. An analytical term; screens show the reason in words instead.
 _Avoid_: match, hit, flag
 
+**Counterpart**:
+A Ticket the Flagged-duplicate counterpart rule links to a Flagged Duplicate as a claim it may repeat: same employee (or confirmed Alias) and Date, with the same hours and pay, the same Confident Intervals, or (an uncertain counterpart) the same unresolved Time text and description. A Flagged Duplicate can have several, and none is chosen as the original; it stays unresolved until a reviewer settles one with Confirmed duplicate, Replacement ticket or a Replacement Link.
+_Avoid_: original, retained claim (before review), match
+
 **Confident Interval**:
 A work period parsed from a Ticket's Time text with no assumption needed: explicit AM/PM or 24-hour form. Only Confident Intervals can establish overlap or separation.
 _Avoid_: parsed time, valid time

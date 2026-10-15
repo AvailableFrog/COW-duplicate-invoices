@@ -209,8 +209,11 @@ def test_an_ambiguous_period_comparison_needs_a_nonzero_job(tmp_path):
     with running(workbook, tmp_path) as booted:
         found = booted.get("/api/review-priorities").json()["possible_duplicates"]
 
+    # Ticket #11: Approved on Job 0, rows 2/3 are flagged duplicates and counterparts of each other (tier 3), but
+    # the Ambiguous-period comparison never links them.
     assert [(item["rule_ids"], sorted(m["excel_row"] for m in item["members"])) for item in found] == [
         (["ambiguous_period_comparison"], [4, 5]),
+        (["flagged_duplicate_counterpart"], [2, 3]),
     ]
 
 
@@ -270,8 +273,9 @@ def test_the_pair_explanation_gives_every_rules_verdict_for_a_linked_pair(app):
     assert peter["linked"] is True
     assert [rule["rule_id"] for rule in peter["rules"]] == [
         "strict_repeat", "time_text_variant", "name_space_variant", "work_period_conflict", "ambiguous_period_comparison",
+        "flagged_duplicate_counterpart", "repeated_component",
     ]
-    assert [rule["matched"] for rule in peter["rules"]] == [True, False, False, True, False]
+    assert [rule["matched"] for rule in peter["rules"]] == [True, False, False, True, False, False, False]
     assert all(rule["reason"] for rule in peter["rules"])
     assert peter["possible_duplicate"] == "Possible duplicate L225526+L225761"
 
@@ -296,8 +300,11 @@ def test_pairs_outside_the_employee_and_date_search_space_are_never_compared(app
 def test_every_rule_is_described_with_its_fields_strength_and_pattern(app):
     rules = {rule["id"]: rule for rule in app.get("/api/review-priorities").json()["rules"]}
 
-    # Ticket #10 adds the Name-space variant between them, in PRD section 5 order.
-    assert list(rules) == ["strict_repeat", "time_text_variant", "name_space_variant", *NEW_RULES[1:]]
+    # Ticket #10 adds the Name-space variant between them and ticket #11 the last two, in PRD section 5 order.
+    assert list(rules) == [
+        "strict_repeat", "time_text_variant", "name_space_variant", *NEW_RULES[1:],
+        "flagged_duplicate_counterpart", "repeated_component",
+    ]
     assert rules["time_text_variant"]["pattern"] == "Same claim looks different as text"
     assert rules["work_period_conflict"]["fields_compared"] == ["Employee", "Date", "Time"]
     assert rules["ambiguous_period_comparison"]["evidence_strength"] == "weak"

@@ -18,8 +18,12 @@ from labour_ticket_analytics.annotations import Annotations
 from labour_ticket_analytics.rules import RULES
 from labour_ticket_analytics.timeparse import TimeParse, compare
 
-# The claim timeline's columns, after the ticket itself.
-TIMELINE_FIELDS = ("Date", "Created", "Modified", "Date Approved", "Supervisor")
+# The claim timeline's columns, after the ticket itself: when each claim was made, in what state and what it
+# claimed (so a chronology such as M's later no-hours ticket reads down the first columns), then how it was handled.
+TIMELINE_FIELDS = (
+    "Date", "Created", "Approval Status", "Regular Hours", "Overtime", "Double Time", "Job Work Pay",
+    "Date Approved", "Modified", "Supervisor",
+)
 
 
 def evidence(
@@ -75,6 +79,21 @@ def pair_explanation(
         "time_comparison": compare(parses[first], parses[second]),
         "possible_duplicate": together if together is not None and together == display_ids.get(second) else None,
         **shown,
+    }
+
+
+def ticket_evidence(
+    member: dict[str, Any],
+    ticket: dict[str, Any],
+    parse: TimeParse,
+    display_id: str | None,
+    annotations: Annotations,
+) -> dict[str, Any]:
+    """One Ticket's evidence on its own, with the possible duplicate it is in (`display_id`), if any."""
+    return {
+        "excel_row": member["excel_row"],
+        "possible_duplicate": display_id,
+        **_shown([{**member, "possible_duplicate": display_id}], [ticket], {member["excel_row"]: parse}, annotations),
     }
 
 

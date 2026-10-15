@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
+from labour_ticket_analytics import flagged
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
@@ -210,7 +211,7 @@ def create_app(state: AppState) -> FastAPI:
     def with_outcomes(fingerprint: str, item: dict, saved: dict | None = None) -> dict:
         """A possible duplicate whose Candidates each carry their pair's Review Outcome, Not reviewed by default.
 
-        Display only: the outcome never changes the tier or rank.
+        Display only here: the tier reads settled pairs separately (rules.settled_rows), never this label.
         """
         saved = state.review.outcomes(fingerprint) if saved is None else saved
         candidates = [
@@ -302,13 +303,36 @@ def create_app(state: AppState) -> FastAPI:
         fingerprint = state.active_fingerprint
         filters = active_filters(fingerprint, query)
         saved = state.review.outcomes(fingerprint)
+        settled = state.review.settled_pairs(fingerprint)
         return {
             "possible_duplicates": [
-                with_outcomes(fingerprint, item, saved) for item in state.store.possible_duplicates(fingerprint, filters)
+                with_outcomes(fingerprint, item, saved)
+                for item in state.store.possible_duplicates(fingerprint, filters, settled)
             ],
             "tiers": [tier.payload() for tier in TIERS],
             "rules": [rule.payload() for rule in RULES.values()],
             "note": REVIEW_PRIORITIES_NOTE,
+            "filters": filters.payload(),
+            **context(fingerprint),
+        }
+
+    @app.get("/api/flagged-duplicates")
+    def flagged_duplicates(query: dict = Depends(filter_query)) -> dict:
+        """Every flagged duplicate the tile counts, with counterpart found or unresolved, shown apart from the tile."""
+        fingerprint = state.active_fingerprint
+        filters = active_filters(fingerprint, query)
+        saved = state.review.outcomes(fingerprint)
+        entries = state.store.flagged_duplicates(fingerprint, filters, state.review.settled_pairs(fingerprint))
+        for entry in entries:
+            for counterpart in entry["counterparts"]:
+                record = saved.get(pair_key(*counterpart["excel_rows"]))
+                counterpart["outcome"] = record["outcome"] if record else outcome_label("not_reviewed")
+        return {
+            "flagged_duplicates": entries,
+            "counts": flagged.counts(entries),
+            "counterpart_statuses": [status.payload() for status in flagged.COUNTERPART_STATUSES],
+            "metric_id": "flagged_duplicate_count",
+            "note": flagged.NOTE,
             "filters": filters.payload(),
             **context(fingerprint),
         }
@@ -369,12 +393,22 @@ def create_app(state: AppState) -> FastAPI:
     def possible_duplicate(fingerprint: str, excel_row: int, query: dict = Depends(filter_query)) -> dict:
         if state.store.ticket(fingerprint, excel_row) is None:
             raise no_ticket(fingerprint, excel_row)
-        payload = state.store.possible_duplicate_evidence(fingerprint, excel_row, active_filters(fingerprint, query))
+        payload = state.store.possible_duplicate_evidence(
+            fingerprint, excel_row, active_filters(fingerprint, query), state.review.settled_pairs(fingerprint),
+        )
         if payload is None:
             raise HTTPException(
                 status_code=404, detail=f"the Ticket at Excel row {excel_row} is in no possible duplicate"
             )
         return {**with_review(fingerprint, payload), **context(fingerprint)}
+
+    @app.get("/api/snapshots/{fingerprint}/tickets/{excel_row}/evidence")
+    def ticket_evidence(fingerprint: str, excel_row: int, query: dict = Depends(filter_query)) -> dict:
+        """One Ticket's evidence on its own, such as a flagged duplicate no rule links."""
+        payload = state.store.ticket_evidence(fingerprint, excel_row, active_filters(fingerprint, query))
+        if payload is None:
+            raise no_ticket(fingerprint, excel_row)
+        return {**payload, **context(fingerprint)}
 
     def require_snapshot(fingerprint: str) -> None:
         if not state.store.has_snapshot(fingerprint):
