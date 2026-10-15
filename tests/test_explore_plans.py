@@ -86,6 +86,7 @@ def test_an_unknown_column_is_refused_wherever_it_appears(app):
 def test_an_unsupported_metric_is_refused_with_the_metrics_that_are_supported(app):
     unknown = validate(app, plan(metric_id="paid_twice_count"))
     unexplorable = validate(app, plan(metric_id="unflagged_exact_repeat_count"))
+    # A distribution is drawn as one histogram (ticket #17): never grouped or split into bars and an Other bar.
     distribution = validate(app, plan(metric_id="submission_lag_days"))
 
     assert errors(unknown) == [("unsupported_metric", "metric_id")]
@@ -93,8 +94,10 @@ def test_an_unsupported_metric_is_refused_with_the_metrics_that_are_supported(ap
     assert "paid_twice_count" not in unknown["errors"][0]["allowed"]
     # A registry metric counting possible duplicates has no dimensions to group by.
     assert errors(unexplorable)[0] == ("unsupported_metric", "metric_id")
-    # A distribution's median cannot be split into Other; its chart is a histogram, not a bar.
-    assert errors(distribution) == [("unsupported_aggregation", "metric_id")]
+    assert set(errors(distribution)) == {
+        ("unsupported_aggregation", "group_by"), ("unsupported_chart", "chart"), ("unsupported_sort", "sort"),
+        ("invalid_plan_value", "include_other"),
+    }
 
 
 def test_an_excessive_limit_is_refused(app):
@@ -208,6 +211,7 @@ def test_approved_tickets_split_by_keyed(app):
 def test_execution_is_deterministic(app):
     first = execute(app, PENDING_BY_SUPERVISOR).json()
     second = execute(app, PENDING_BY_SUPERVISOR).json()
+    first.pop("cache"), second.pop("cache")
 
     assert first == second
 
@@ -371,13 +375,16 @@ def test_the_catalogue_offers_six_starter_plans_that_each_validate_and_run(app):
     assert by_id["pending_by_supervisor"]["plan"] == PENDING_BY_SUPERVISOR
     metric_ids = {metric["id"] for metric in catalogue["metrics"]}
     assert {"ticket_count", "claimed_hours", "pending_count"} <= metric_ids
-    assert "submission_lag_days" not in metric_ids
+    assert "submission_lag_days" in metric_ids
+    assert "unflagged_exact_repeat_count" not in metric_ids
     assert catalogue["limits"] == {"min": 1, "max": 25, "default": 10}
     fields = {field["id"]: field for field in catalogue["fields"]}
     assert fields["Supervisor"]["operators"] == ["eq", "ne", "in", "not_in"]
     assert fields["Keyed"]["operators"] == ["eq", "ne"]
     assert {value["value"] for value in fields["Approval Status"]["values"]} == {"Approved", "Pending", "Rejected"}
-    assert [chart["id"] for chart in catalogue["charts"]] == ["bar_horizontal", "bar_vertical"]
+    assert [chart["id"] for chart in catalogue["charts"]] == [
+        "bar_horizontal", "bar_vertical", "line", "histogram", "scatter", "table",
+    ]
 
 
 def test_the_null_provider_is_wired_and_proposes_no_plan(app):

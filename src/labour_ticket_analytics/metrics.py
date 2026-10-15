@@ -20,11 +20,16 @@ from labour_ticket_analytics.filters import DATE_BASES, TICKET_FIELDS, Filters
 from labour_ticket_analytics.rules import IN_CANDIDATE_SQL, STRICT_KEY, strict_groups_sql
 from labour_ticket_analytics.schema import REQUIRED_COLUMNS
 
-REGISTRY_VERSION = "1.5.0"
+REGISTRY_VERSION = "1.6.0"
 
 # Grouping dimension ID (the source column) -> normalized column: the Ticket fields filters also accept.
 DIMENSIONS = {name: field.column for name, field in TICKET_FIELDS.items()}
 TICKET_DIMENSIONS = tuple(DIMENSIONS)
+# Time groupings (decision-log entry 79): a Ticket's date on an explicit date basis, truncated to the
+# period's first day (a week starts on Monday). Only Explore groups by them.
+TIME_GROUPINGS: dict[str, str] = {"Week": "week", "Month": "month"}
+# The group key of a Ticket whose date on the time basis falls outside the reporting window.
+OUTSIDE_WINDOW_KEY = "outside"
 
 CLAIMED_HOURS_SQL = "(t.regular_hours + t.overtime + t.double_time)"
 HOURS_UNUSABLE_SQL = "(t.regular_hours IS NULL OR t.overtime IS NULL OR t.double_time IS NULL)"
@@ -58,10 +63,17 @@ DESCRIPTION_DATE_CONFLICT_SQL = (
 )
 # The usable dates a reporting window applies to, by normalized column: the three date bases.
 WINDOW_DATES = {"Date": "work_date", "Created": "created", "Date Approved": "date_approved"}
-OUTSIDE_WINDOW_SQL = "(" + " OR ".join(
-    f"(t.{column} IS NOT NULL AND CAST(t.{column} AS DATE) NOT BETWEEN $window_from AND $window_to)"
-    for column in WINDOW_DATES.values()
-) + ")"
+
+
+def outside_window_sql(*columns: str) -> str:
+    """True when any of these usable dates falls outside the reporting window ($window_from, $window_to)."""
+    return "(" + " OR ".join(
+        f"(t.{column} IS NOT NULL AND CAST(t.{column} AS DATE) NOT BETWEEN $window_from AND $window_to)"
+        for column in columns
+    ) + ")"
+
+
+OUTSIDE_WINDOW_SQL = outside_window_sql(*WINDOW_DATES.values())
 # A required cell left empty, as the import issues record it: a blank row, an empty required cell, or a
 # missing Ticket Number. An invalid value is a different issue and is not counted here.
 MISSING_REQUIRED_FIELD_SQL = (
@@ -439,6 +451,8 @@ REGISTRY: tuple[Metric, ...] = (
         null_treatment="A Ticket with an unusable Date or Created is excluded and counted.",
         exclusions_text=(
             "Date or Created is missing or not a date",
+            "Date or Created outside the reporting window (an anomalous date, such as a work date years ahead) is "
+            "a separate exception, shown as recorded and never corrected",
             "Negative lag (work dated after its submission) is a separate exception, not discarded silently",
         ),
         lineage="Each contributing Ticket's Date and Created cells.",
@@ -447,11 +461,17 @@ REGISTRY: tuple[Metric, ...] = (
         exclusions=(
             Exclusion("date_unusable", "t.work_date IS NULL OR t.created IS NULL", "Date or Created is missing or not a date"),
             Exclusion(
+                "date_outside_reporting_window",
+                outside_window_sql("work_date", "created"),
+                "Date as recorded or Created falls outside the reporting window",
+            ),
+            Exclusion(
                 "negative_lag",
                 "CAST(t.work_date AS DATE) > CAST(t.created AS DATE)",
                 "Date as recorded falls after Created",
             ),
         ),
+        reads_reporting_window=True,
     ),
     Metric(
         id="observed_approval_interval_hours",
@@ -464,6 +484,7 @@ REGISTRY: tuple[Metric, ...] = (
         exclusions_text=(
             "Tickets that are not Approved",
             "Created or Date Approved is missing or not a date",
+            "Created or Date Approved outside the reporting window is a separate exception",
             "Date Approved before Created is a separate exception",
         ),
         lineage="Each contributing Ticket's Created and Date Approved cells.",
@@ -476,9 +497,15 @@ REGISTRY: tuple[Metric, ...] = (
                 "t.created IS NULL OR t.date_approved IS NULL",
                 "Created or Date Approved is missing or not a date",
             ),
+            Exclusion(
+                "date_outside_reporting_window",
+                outside_window_sql("created", "date_approved"),
+                "Created or Date Approved falls outside the reporting window",
+            ),
             Exclusion("negative_interval", "t.date_approved < t.created", "Date Approved falls before Created"),
         ),
         requires_columns=("Date Approved",),
+        reads_reporting_window=True,
     ),
     _base_value_metric(
         "known_base_value_bbd",
@@ -659,15 +686,26 @@ def evaluate(
     include_rows: bool = False,
     replaced_rows: list[int] | tuple[int, ...] = (),
     window: tuple[dt.date, dt.date] | None = None,
+    time_basis: str | None = None,
+    include_values: bool = False,
 ) -> dict[str, Any]:
     """One metric's value under the filters, with its coverage, warnings and (optionally) source rows.
 
     `replaced_rows` are the Tickets the local review file's kept/replaced links
     mark as replaced; only a metric that `reads_review_links` uses them.
     `window` is the reporting window, read only by a metric that
-    `reads_reporting_window`; without one such a metric has no value.
+    `reads_reporting_window` and by a time grouping; without one such a metric
+    has no value. A time grouping (TIME_GROUPINGS) groups by the period of
+    each Ticket's date on `time_basis`: its key is the period's first day in
+    ISO form, OUTSIDE_WINDOW_KEY for a date outside the window and None for an
+    unusable date. `include_values` lists each contributing Ticket's own value.
     """
-    if group_by is not None:
+    if group_by in TIME_GROUPINGS:
+        if time_basis not in DATE_BASES or time_basis not in fields:
+            raise MetricError("unsupported_dimension", "group_by", f"{group_by} needs a date basis the workbook has")
+        if window is None:
+            raise MetricError("unsupported_dimension", "group_by", f"{group_by} needs a reporting window")
+    elif group_by is not None:
         if group_by not in metric.allowed_dimensions:
             raise MetricError(
                 "unsupported_dimension", "group_by", f"{metric.id} cannot be grouped by {group_by!r}; "
@@ -710,7 +748,7 @@ def evaluate(
         result.update(_extra_claims(connection, fingerprint, filters, include_rows))
         return result
 
-    scoped_sql, parameters = _scoped(metric, fingerprint, filters, as_of, group_by, replaced_rows, window)
+    scoped_sql, parameters = _scoped(metric, fingerprint, filters, as_of, group_by, replaced_rows, window, time_basis)
     totals = _aggregate(connection, metric, scoped_sql, parameters, grouped=False)
     total = totals[0] if totals else _empty_aggregate(metric)
     result["value"] = total["value"]
@@ -731,11 +769,15 @@ def evaluate(
             "denominator_metric": metric.share_of,
             "ratio": (result["value"] / denominator) if denominator else None,
         }
-    if include_rows:
+    if include_rows or include_values:
         rows = connection.execute(
-            f"{scoped_sql} SELECT excel_row FROM scoped WHERE excluded_by IS NULL ORDER BY excel_row", parameters
+            f"{scoped_sql} SELECT excel_row, metric_value FROM scoped WHERE excluded_by IS NULL ORDER BY excel_row",
+            parameters,
         ).fetchall()
-        result["contributing_rows"] = [row[0] for row in rows]
+        if include_rows:
+            result["contributing_rows"] = [row[0] for row in rows]
+        if include_values:
+            result["contributing_values"] = {row: _number(value) for row, value in rows}
     return result
 
 
@@ -958,6 +1000,7 @@ def _scoped(
     group_by: str | None,
     replaced_rows: list[int] | tuple[int, ...] = (),
     window: tuple[dt.date, dt.date] | None = None,
+    time_basis: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """A WITH clause defining `scoped`: one row per in-scope Ticket with its value and any exclusion."""
     filter_sql, parameters = filters.sql("t")
@@ -966,14 +1009,25 @@ def _scoped(
         parameters["as_of"] = as_of
     if metric.reads_review_links:
         parameters["replaced_rows"] = list(replaced_rows)
-    if metric.reads_reporting_window and window is not None:
+    timed = group_by in TIME_GROUPINGS
+    if (metric.reads_reporting_window or timed) and window is not None:
         parameters["window_from"], parameters["window_to"] = window
     excluded = " ".join(f"WHEN {item.predicate} THEN '{item.code}'" for item in metric.exclusions)
     partial = " ".join(f"WHEN {item.predicate} THEN '{item.code}'" for item in metric.partials)
     quantity = " ".join(
         f"WHEN {item.predicate} THEN {item.quantity}" for item in metric.partials if item.quantity is not None
     )
-    group_key = f"t.{DIMENSIONS[group_by]}" if group_by is not None else "NULL"
+    if timed:
+        column = f"t.{DATE_BASES[time_basis][0]}"
+        group_key = (
+            f"CASE WHEN {column} IS NULL THEN NULL"
+            f" WHEN CAST({column} AS DATE) NOT BETWEEN $window_from AND $window_to THEN '{OUTSIDE_WINDOW_KEY}'"
+            f" ELSE strftime(date_trunc('{TIME_GROUPINGS[group_by]}', {column}), '%Y-%m-%d') END"
+        )
+    elif group_by is not None:
+        group_key = f"t.{DIMENSIONS[group_by]}"
+    else:
+        group_key = "NULL"
     sql = f"""WITH base AS (
         SELECT t.*, {f"CASE {excluded} END" if excluded else "NULL"} AS excluded_by
         FROM ticket_values t

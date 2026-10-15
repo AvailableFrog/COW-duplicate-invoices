@@ -217,6 +217,9 @@ class ReviewStore:
                 "if another copy of the application is running with the same --data-dir, stop it first"
             ) from error
         self._lock = threading.RLock()
+        # Bumped by every committed change to outcomes, links or Alias decisions, so a cached Explore result
+        # made under earlier review data is never served after a change (decision-log entry 84).
+        self._revision = 0
         self.connection.execute(SCHEMA)
         row = self.connection.execute("SELECT max(schema_version) FROM review_store").fetchone()
         if row[0] is None:
@@ -238,6 +241,12 @@ class ReviewStore:
         with self._lock:
             self.connection.close()
 
+    @property
+    def revision(self) -> int:
+        """How many changes this launch has committed: the review configuration a cached result was made under."""
+        with self._lock:
+            return self._revision
+
     @contextmanager
     def _transaction(self) -> Iterator[None]:
         """One atomic change: a value and its history row are saved together or not at all."""
@@ -248,6 +257,7 @@ class ReviewStore:
             self.connection.execute("ROLLBACK")
             raise
         self.connection.execute("COMMIT")
+        self._revision += 1
 
     # Outcomes
 
