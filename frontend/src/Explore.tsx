@@ -363,7 +363,9 @@ function Chips({ catalogue, plan, onChange, issues }: ChipsProps) {
           />
         </label>
         <p className="chip-note muted">
-          {plan.date_range ? `The range applies to ${plan.date_basis === "Date" ? "Date as recorded" : plan.date_basis}.` : "All dates: the date basis applies once a range is set."}
+          {plan.date_range
+            ? `The range applies to ${catalogue.date_bases.find((basis) => basis.id === plan.date_basis)?.label ?? plan.date_basis}.`
+            : "All dates: the date basis applies once a range is set."}
         </p>
       </div>
 

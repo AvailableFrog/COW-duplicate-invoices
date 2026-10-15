@@ -34,6 +34,9 @@ OPERATORS: dict[str, str] = {"eq": "is", "ne": "is not", "in": "is one of", "not
 LIST_OPERATORS = ("in", "not_in")
 # The most values one "is one of" condition may list.
 MAX_CONDITION_VALUES = 50
+# Bounds on one condition value: a Job Number fits the stored BIGINT, and text is a recorded label, not a document.
+MAX_INTEGER = 2**63 - 1
+MAX_TEXT_LENGTH = 200
 
 
 @dataclass(frozen=True)
@@ -144,14 +147,14 @@ def _check_value(field_name: str, spec: TicketField, value: Any) -> None:
         ok = isinstance(value, bool)
         expected = "true or false"
     elif spec.kind == "integer":
-        ok = isinstance(value, int) and not isinstance(value, bool)
+        ok = isinstance(value, int) and not isinstance(value, bool) and -MAX_INTEGER <= value <= MAX_INTEGER
         expected = "a whole number"
     elif spec.kind == "status":
         ok = value in APPROVAL_STATUSES
         expected = f"one of {', '.join(APPROVAL_STATUSES)}"
     else:
-        ok = isinstance(value, str) and bool(value.strip())
-        expected = "nonblank text"
+        ok = isinstance(value, str) and bool(value.strip()) and len(value) <= MAX_TEXT_LENGTH
+        expected = f"nonblank text of at most {MAX_TEXT_LENGTH} characters"
     if not ok:
         raise FilterError(
             "value", f"{field_name} values must be {expected}, not {value!r}", "invalid_filter_value",

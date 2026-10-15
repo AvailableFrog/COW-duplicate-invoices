@@ -231,13 +231,18 @@ def inherited(raw: Any, fields: tuple[str, ...] | list[str]) -> Inherited:
         return Inherited()
     if not isinstance(raw, dict):
         raise PlanError([PlanIssue("invalid_plan_value", "inherited", "The inherited filters must be an object or null.")])
+    jobs = raw.get("jobs") or []
+    if not isinstance(jobs, list) or not all(
+        isinstance(job, int) and not isinstance(job, bool) and abs(job) < 2**63 for job in jobs
+    ):
+        raise PlanError([PlanIssue("invalid_inherited_filter", "inherited.jobs", "jobs must be a list of whole numbers.")])
     try:
         return Inherited(Filters.build(
             fields=fields,
             date_basis=raw.get("date_basis") or DEFAULT_DATE_BASIS,
             date_from=_iso_date(raw.get("date_from")),
             date_to=_iso_date(raw.get("date_to")),
-            jobs=list(raw.get("jobs") or []),
+            jobs=jobs,
             statuses=list(raw.get("statuses") or []),
         ))
     except (FilterError, ValueError, TypeError) as error:

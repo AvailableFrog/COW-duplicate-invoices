@@ -29,14 +29,6 @@ def by_status():
     return plan(group_by=["Approval Status"], filters=[], chart="bar_vertical")
 
 
-def source_column(name):
-    """Every value of one column in the committed workbook, read straight from the sheet."""
-    sheet = openpyxl.load_workbook(WORKBOOK, read_only=True).worksheets[0]
-    rows = sheet.iter_rows(values_only=True)
-    header = list(next(rows))
-    return [row[header.index(name)] for row in rows], header, sheet
-
-
 def source_rows():
     sheet = openpyxl.load_workbook(WORKBOOK, read_only=True).worksheets[0]
     rows = sheet.iter_rows(values_only=True)
@@ -151,6 +143,16 @@ def test_other_plan_fields_are_checked_against_their_allowlists(app):
     }
 
 
+def test_values_the_database_cannot_hold_are_refused_rather_than_failing(app):
+    huge = validate(app, plan(filters=[{"field": "Job Number", "operator": "eq", "value": 10**30}]))
+    long_text = validate(app, plan(filters=[{"field": "Supervisor", "operator": "eq", "value": "x" * 500}]))
+    bad_jobs = app.client.post("/api/plans/validate", json={"plan": PENDING_BY_SUPERVISOR, "inherited": {"jobs": ["41215"]}}).json()
+
+    assert errors(huge) == [("invalid_filter_value", "filters[0].value")]
+    assert errors(long_text) == [("invalid_filter_value", "filters[0].value")]
+    assert errors(bad_jobs) == [("invalid_inherited_filter", "inherited.jobs")]
+
+
 def test_a_reversed_date_range_and_two_groupings_are_refused(app):
     reversed_range = validate(app, plan(date_range={"from": "2026-10-01", "to": "2026-09-01"}))
     two = validate(app, plan(group_by=["Supervisor", "Occupation"]))
@@ -179,7 +181,7 @@ def test_ticket_counts_by_approval_status_reconcile_with_lineage_and_versions(ap
     groups = {group["label"]: group for group in body["result"]["groups"]}
     assert {label: group["value"] for label, group in groups.items()} == {"Approved": 2611, "Pending": 129, "Rejected": 96}
     assert body["result"]["total"] == 2836
-    statuses = Counter(source_column("Approval Status")[0])
+    statuses = Counter(row["Approval Status"] for row in source_rows())
     for label, group in groups.items():
         assert len(group["excel_rows"]) == group["value"] == statuses[label]
     assert body["lineage"]["contributing_tickets"] == 2836
