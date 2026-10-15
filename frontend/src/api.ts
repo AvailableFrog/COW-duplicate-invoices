@@ -1062,3 +1062,192 @@ export function saveAlias(
 ): Promise<AliasProposal & { changed: boolean; rules_ran: boolean; rerun: RuleRerun }> {
   return sendJson("PUT", `/api/snapshots/${encodeURIComponent(fingerprint)}/aliases`, change);
 }
+
+// Explore: the typed query plan (PRD section 7), its catalogue and its executed result.
+
+export type ChartTemplateId = "bar_horizontal" | "bar_vertical";
+export type PlanSort = "metric_desc" | "metric_asc" | "label_asc";
+export type PlanOperator = "eq" | "ne" | "in" | "not_in";
+export type FieldValue = string | number | boolean;
+
+export interface PlanFilter {
+  field: string;
+  operator: PlanOperator;
+  value: FieldValue | FieldValue[];
+}
+
+/** The plan the chips compile to; every field is required, so nothing is assumed. */
+export interface Plan {
+  metric_id: string;
+  group_by: string[];
+  filters: PlanFilter[];
+  date_basis: DateBasis;
+  date_range: { from: string | null; to: string | null } | null;
+  chart: ChartTemplateId;
+  sort: PlanSort;
+  limit: number;
+  include_other: boolean;
+}
+
+export interface ExploreMetric {
+  id: string;
+  label: string;
+  definition: string;
+  unit: string;
+  statistic: string;
+  allowed_dimensions: string[];
+  availability: { status: string; reason: string | null };
+}
+
+export interface ExploreField {
+  id: string;
+  kind: "status" | "boolean" | "integer" | "text";
+  operators: PlanOperator[];
+  available: boolean;
+  values: { value: FieldValue; label: string; tickets: number }[];
+  /** How its categories are counted in words, one and many. */
+  nouns: [string, string];
+}
+
+export interface StarterPlan {
+  id: string;
+  question: string;
+  plan: Plan;
+}
+
+export interface ExploreCatalogue extends Provenance {
+  metrics: ExploreMetric[];
+  fields: ExploreField[];
+  operators: { id: PlanOperator; label: string }[];
+  date_bases: { id: DateBasis; label: string; available: boolean }[];
+  charts: { id: ChartTemplateId; label: string }[];
+  sorts: { id: PlanSort; label: string }[];
+  limits: { min: number; max: number; default: number };
+  max_filters: number;
+  starters: StarterPlan[];
+  provider: { id: string; label: string; proposes_plans: boolean };
+}
+
+export interface PlanIssue {
+  code: string;
+  field: string;
+  message: string;
+  allowed?: unknown[];
+}
+
+export interface PlanGroup {
+  id: string;
+  key: FieldValue | null;
+  label: string;
+  value: number;
+  contributing_tickets: number;
+  excel_rows: number[];
+  shown: boolean;
+  in_other: boolean;
+}
+
+export interface PlanBar {
+  id: string;
+  label: string;
+  value: number;
+  other: boolean;
+}
+
+export interface InheritedFilters {
+  source: "overview" | "none";
+  label: string;
+  filters: FilterPayload | null;
+}
+
+export interface PlanResult extends Provenance {
+  plan: Plan;
+  inherited_filters: InheritedFilters;
+  filters: FilterPayload & { conditions: { field: string; operator: PlanOperator; value: unknown; description: string }[] };
+  metric: { id: string; label: string; definition: string; unit: string; statistic: string };
+  availability: { status: string; reason: string | null };
+  title: string;
+  summary: string;
+  grain: string;
+  result: {
+    total: number | null;
+    contributing_tickets: number;
+    unit: string;
+    value_title: string;
+    empty: boolean;
+    groups: PlanGroup[];
+    bars: PlanBar[];
+    other: (PlanBar & { contributing_tickets: number; groups: number; excel_rows: number[] }) | null;
+    hidden_groups: number;
+    percentage: Percentage | null;
+  };
+  /** A trusted template's Vega-Lite specification with inline data; null when nothing is drawn. */
+  chart: { template: ChartTemplateId; spec: Record<string, unknown> } | null;
+  lineage: { metric_id: string; metric: string; contributing_tickets: number; contributing_rows: number[] };
+  coverage: { contributing_tickets: number; excluded: CoverageItem[]; partial: CoverageItem[] } | null;
+  warnings: string[];
+  notes: string[];
+}
+
+/** A plan the service refused: every issue, each naming the plan field at fault. */
+export class PlanRejected extends Error {
+  constructor(
+    message: string,
+    readonly issues: PlanIssue[],
+  ) {
+    super(message);
+  }
+}
+
+/** The result was asked for the Snapshot on screen, and another Snapshot is now active. */
+export class StaleSnapshot extends Error {
+  constructor(
+    message: string,
+    readonly activeFingerprint: string,
+  ) {
+    super(message);
+  }
+}
+
+export function fetchExploreCatalogue(signal?: AbortSignal): Promise<ExploreCatalogue> {
+  return getJson<ExploreCatalogue>("/api/explore", signal);
+}
+
+/** The Overview filter bar's state as inherited filters, attached beside the plan rather than inside it. */
+export function inheritedFilters(filters: FilterState) {
+  return {
+    date_basis: filters.dateBasis,
+    date_from: filters.dateFrom,
+    date_to: filters.dateTo,
+    jobs: filters.job === null ? [] : [filters.job],
+    statuses: filters.status === null ? [] : [filters.status],
+  };
+}
+
+/** Run a plan against the Snapshot the screen shows; a different active Snapshot is refused as stale. */
+export async function executePlan(
+  plan: Plan,
+  inherited: FilterState | null,
+  snapshotFingerprint: string,
+  signal?: AbortSignal,
+): Promise<PlanResult> {
+  const response = await fetch("/api/plans/execute", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan,
+      inherited: inherited === null ? null : inheritedFilters(inherited),
+      snapshot_fingerprint: snapshotFingerprint,
+    }),
+    signal,
+  });
+  if (response.status === 422 || response.status === 409) {
+    const body = (await response.json()) as {
+      detail?: { message?: string; errors?: PlanIssue[]; active_snapshot_fingerprint?: string };
+    };
+    const message = body.detail?.message ?? `${response.status} ${response.statusText}`;
+    if (response.status === 409) throw new StaleSnapshot(message, body.detail?.active_snapshot_fingerprint ?? "");
+    throw new PlanRejected(message, body.detail?.errors ?? []);
+  }
+  if (!response.ok) throw await failure(response);
+  return (await response.json()) as PlanResult;
+}

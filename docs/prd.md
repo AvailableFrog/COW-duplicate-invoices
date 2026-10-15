@@ -319,6 +319,7 @@ In release one the tab is named **Explore** and is driven entirely by the editab
 There is no prompt field, no model, and no inference cost (ADR 0001).
 Everything in this section that depends on interpreting a sentence (the prompt field, the one-sentence interpretation, follow-ups, clarification, the example-query table, and the held-out evaluation) is the release-two contract, retained here so the plan schema is designed for it from the start.
 The intended release-two provider is a local open-weights model behind the provider adapter; nothing is built for it in release one.
+Release one's plan allowlists, starter questions, top-ten-plus-Other behaviour, inherited filters and invalidation are recorded in decision-log entries 72-77.
 
 ### Research-informed direction
 

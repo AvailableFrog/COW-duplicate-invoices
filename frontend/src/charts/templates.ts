@@ -154,3 +154,27 @@ export function assertTrusted(spec: unknown, path = "spec"): void {
     assertTrusted(value, `${path}.${key}`);
   }
 }
+
+/** The service's chart templates (chart_templates.py): an Explore result names one of these in `usermeta`. */
+export const SERVICE_TEMPLATES = ["bar_horizontal", "bar_vertical"] as const;
+export type ServiceTemplateId = (typeof SERVICE_TEMPLATES)[number];
+
+/**
+ * Accept a specification the service filled from one of its templates: it names a known template, its data is
+ * an inline array and nothing else, and it carries no URL, expression, filter, parameter or transform. Anything
+ * else is refused before Vega sees it, so a result can only ever be drawn as the template it claims to be.
+ */
+export function assertServiceTemplate(spec: unknown, expected: string): TopLevelSpec {
+  if (spec === null || typeof spec !== "object" || Array.isArray(spec)) throw new Error("untrusted chart specification: not an object");
+  const record = spec as Record<string, unknown>;
+  const template = (record.usermeta as { template?: unknown } | undefined)?.template;
+  if (typeof template !== "string" || !(SERVICE_TEMPLATES as readonly string[]).includes(template) || template !== expected) {
+    throw new Error(`untrusted chart specification: ${String(template)} is not a trusted template`);
+  }
+  const data = record.data as Record<string, unknown> | undefined;
+  if (!data || Object.keys(data).join() !== "values" || !Array.isArray(data.values)) {
+    throw new Error("untrusted chart specification: data must be inline values only");
+  }
+  assertTrusted(spec);
+  return spec as TopLevelSpec;
+}

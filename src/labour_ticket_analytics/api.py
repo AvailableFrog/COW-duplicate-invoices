@@ -7,17 +7,18 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
-from labour_ticket_analytics import data_readiness, flagged, pattern_matrix, processing_queue, value_context
+from labour_ticket_analytics import data_readiness, flagged, pattern_matrix, plans, processing_queue, value_context
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, Metric, MetricError, registry_payload
 from labour_ticket_analytics.normalized import normalize_label
+from labour_ticket_analytics.providers import NullProvider, PlanProvider
 from labour_ticket_analytics.review import (
     ALIAS_DECISION_VALUES, ReviewError, ReviewStore, outcome_label, pair_key, proposing_rows,
 )
@@ -80,6 +81,8 @@ class AppState:
     workbook_path: Path
     review: ReviewStore
     frontend_dist: Path = FRONTEND_DIST
+    # What turns a question into a plan; release one has no model (ADR 0001).
+    provider: PlanProvider = field(default_factory=NullProvider)
     import_lock: threading.Lock = field(default_factory=threading.Lock)
     # Held while an Alias decision is saved and the rules run again, so the stored Candidates always
     # reflect the latest decisions.
@@ -373,6 +376,110 @@ def create_app(state: AppState) -> FastAPI:
         except MetricError as error:
             raise metric_failure(error) from error
         return {**listed, **context(fingerprint)}
+
+    def compiled_plan(fingerprint: str, body: dict) -> tuple[plans.Plan, plans.Inherited, Filters]:
+        """The request's plan and inherited Overview filters, validated and compiled; raises PlanError."""
+        fields = state.store.fields(fingerprint)
+        issues: list[plans.PlanIssue] = []
+        plan = inheritance = None
+        try:
+            plan = plans.validate(body.get("plan"), fields)
+        except plans.PlanError as error:
+            issues.extend(error.issues)
+        try:
+            inheritance = plans.inherited(body.get("inherited"), fields)
+        except plans.PlanError as error:
+            issues.extend(error.issues)
+        if issues:
+            raise plans.PlanError(issues)
+        return plan, inheritance, plans.compile_filters(plan, inheritance, fields)
+
+    @app.get("/api/explore")
+    def explore_catalogue() -> dict:
+        """What the Explore chips may hold: the allowlists, the Snapshot's field values and the six starter plans."""
+        fingerprint = state.active_fingerprint
+        return {
+            **plans.catalogue(state.store.fields(fingerprint), state.store.field_values(fingerprint)),
+            "provider": state.provider.payload(),
+            **context(fingerprint),
+        }
+
+    @app.post("/api/plans/validate")
+    def validate_plan(body: dict = Body(...)) -> dict:
+        """Whether a plan is inside the allowlists; every problem is listed with the field at fault."""
+        fingerprint = state.active_fingerprint
+        try:
+            plan, inheritance, filters = compiled_plan(fingerprint, body)
+        except plans.PlanError as error:
+            return {"valid": False, "plan": None, "errors": [issue.payload() for issue in error.issues], **context(fingerprint)}
+        return {
+            "valid": True,
+            "plan": plan.payload(),
+            "errors": [],
+            "inherited_filters": inheritance.payload(),
+            "filters": filters.payload(),
+            **context(fingerprint),
+        }
+
+    @app.post("/api/plans/execute")
+    def execute_plan(body: dict = Body(...)) -> dict:
+        """A valid plan's values, bars, table, lineage and chart, with the Snapshot, as-of date and versions beside it.
+
+        A request naming the Snapshot its result is shown for is refused (409)
+        once another Snapshot is active, so a displayed result is invalidated
+        until it is run again.
+        """
+        fingerprint = state.active_fingerprint
+        shown_for = body.get("snapshot_fingerprint")
+        if shown_for is not None and shown_for != fingerprint:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "stale_snapshot",
+                    "field": "snapshot_fingerprint",
+                    "message": f"The Snapshot changed from {str(shown_for)[:12]} to {fingerprint[:12]}; "
+                    "run the plan again to see it against the active Snapshot.",
+                    "active_snapshot_fingerprint": fingerprint,
+                },
+            )
+        try:
+            plan, inheritance, filters = compiled_plan(fingerprint, body)
+        except plans.PlanError as error:
+            raise HTTPException(status_code=422, detail=error.payload()) from error
+        metric = plan.metric
+        options: dict = {}
+        if metric.reads_review_links:
+            options["replaced_rows"] = state.review.replaced_rows(fingerprint)
+        if metric.reads_reporting_window:
+            options["window"] = window_bounds(reporting_window(fingerprint, None, None))
+        try:
+            evaluated = state.store.evaluate_plan(fingerprint, metric, filters, state.as_of, plan.dimension, **options)
+        except MetricError as error:
+            raise metric_failure(error) from error
+        job_names = state.store.job_names(fingerprint) if plan.dimension == "Job Number" else {}
+        return {**plans.result(plan, inheritance, filters, evaluated, job_names), **context(fingerprint)}
+
+    @app.post("/api/plans/propose")
+    def propose_plan(body: dict = Body(...)) -> dict:
+        """Ask the provider for a plan; the release-one null provider proposes none, and any plan is validated first."""
+        fingerprint = state.active_fingerprint
+        question = body.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "question_required", "field": "question", "message": "give a question in words"},
+            )
+        proposal = state.provider.propose(question)
+        validation = None
+        if proposal.plan is not None:
+            validation = validate_plan({"plan": proposal.plan})
+        return {
+            "provider": state.provider.payload(),
+            "plan": proposal.plan if validation and validation["valid"] else None,
+            "validation": validation,
+            "message": proposal.message,
+            **context(fingerprint),
+        }
 
     @app.get("/api/overview/processing-queue")
     def processing_queue_view(query: dict = Depends(filter_query)) -> dict:
