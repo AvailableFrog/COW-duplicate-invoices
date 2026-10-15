@@ -1604,3 +1604,63 @@ export async function answerCarryForward(
   if (!response.ok) throw await failure(response);
   return (await response.json()) as CarryForwardResponse & { rules_ran: boolean };
 }
+
+/** Ticket #41: a workbook chosen in the browser, previewed before it becomes the active Snapshot. */
+export interface UploadPreview {
+  id: string;
+  workbook_name: string;
+  size_bytes: number;
+  stored_as: string;
+  fingerprint: string;
+  fingerprint_algorithm: string;
+  sheet: string;
+  row_count: number;
+  field_count: number;
+  mapping: { column: string; kind: "required" | "optional"; position: number | null; present: boolean }[];
+  missing_required_columns: string[];
+  missing_optional_columns: string[];
+  other_columns: string[];
+  disabled_features: DisabledFeature[];
+  import_issue_count: number;
+  import_issue_counts: { code: string; count: number }[];
+  import_issues: ImportIssue[];
+  same_as: "active" | "loaded" | null;
+}
+
+/** A refused upload: why, and what to do next. */
+export class UploadRefusal extends Error {
+  constructor(
+    message: string,
+    readonly nextStep: string,
+  ) {
+    super(message);
+  }
+}
+
+async function uploadFailure(response: Response): Promise<UploadRefusal> {
+  const body = (await response.json().catch(() => ({}))) as { detail?: { message?: string; next_step?: string } | string };
+  const detail = body.detail;
+  if (detail && typeof detail === "object") {
+    return new UploadRefusal(detail.message ?? `${response.status} ${response.statusText}`, detail.next_step ?? "");
+  }
+  return new UploadRefusal(typeof detail === "string" ? detail : `${response.status} ${response.statusText}`, "");
+}
+
+/** Send the chosen .xlsx file to the service, which stores and previews it; nothing becomes active yet. */
+export async function uploadWorkbook(file: File, signal?: AbortSignal): Promise<UploadPreview> {
+  const response = await fetch("/api/uploads", {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream", "X-Workbook-Name": encodeURIComponent(file.name) },
+    body: file,
+    signal,
+  });
+  if (!response.ok) throw await uploadFailure(response);
+  return ((await response.json()) as { preview: UploadPreview }).preview;
+}
+
+/** Make a previewed workbook the active Snapshot, beside the earlier ones. */
+export async function activateUpload(id: string): Promise<ReimportResponse> {
+  const response = await fetch(`/api/uploads/${encodeURIComponent(id)}/activate`, { method: "POST" });
+  if (!response.ok) throw await uploadFailure(response);
+  return (await response.json()) as ReimportResponse;
+}

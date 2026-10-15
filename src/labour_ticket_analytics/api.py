@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -15,7 +16,7 @@ from pydantic import BaseModel
 from labour_ticket_analytics import __version__
 from labour_ticket_analytics import (
     carry_forward, claimed_hours, data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, timing,
-    value_context, views,
+    uploads, value_context, views,
 )
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
@@ -30,7 +31,7 @@ from labour_ticket_analytics.rules import RULES, TIERS, Aliases, alias_key
 from labour_ticket_analytics.store import SnapshotStore
 from labour_ticket_analytics.timeparse import PARSER_VERSION, TimeParse, compare
 from labour_ticket_analytics.versions import versions
-from labour_ticket_analytics.workbook import WorkbookError, fingerprint_workbook, import_workbook
+from labour_ticket_analytics.workbook import Snapshot, WorkbookError, fingerprint_workbook, import_workbook
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 DEFAULT_AS_OF = dt.date(2026, 10, 8)
@@ -94,6 +95,9 @@ class AppState:
     # Held while an Alias decision is saved and the rules run again, so the stored Candidates always
     # reflect the latest decisions.
     rules_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Workbooks chosen in the browser, previewed and not yet activated (ticket #41), by fingerprint, with their size
+    # in bytes; only the latest three are kept, and an older one must be chosen again.
+    previews: dict[str, tuple[Snapshot, int]] = field(default_factory=dict)
 
     def aliases(self, fingerprint: str) -> Aliases:
         """The Snapshot's confirmed Aliases, as the rules read them."""
@@ -112,17 +116,24 @@ class AppState:
             if not self.workbook_path.is_file():
                 raise WorkbookError(f"workbook not found: {self.workbook_path}")
             fingerprint = fingerprint_workbook(self.workbook_path)
-            added = False
-            # Keep the values of every decided Ticket in the Snapshots loaded now, so a decision carried forward
-            # to this export can be compared with them even after a relaunch drops those Snapshots.
-            for loaded in self.store.snapshots():
-                carry_forward.remember_decided(self.review, self.store, loaded["fingerprint"])
-            if not self.store.has_snapshot(fingerprint):
-                snapshot = import_workbook(self.workbook_path)
-                added = self.store.add_snapshot(snapshot, self.aliases(snapshot.fingerprint))
-                fingerprint = snapshot.fingerprint
-            self.active_fingerprint = fingerprint
-            return added
+            if self.store.has_snapshot(fingerprint):
+                self.active_fingerprint = fingerprint
+                return False
+            return self._activate(import_workbook(self.workbook_path))
+
+    def activate(self, snapshot: Snapshot) -> bool:
+        """Make a previewed Snapshot active beside the others; identical content keeps the Snapshot already stored."""
+        with self.import_lock:
+            return self._activate(snapshot)
+
+    def _activate(self, snapshot: Snapshot) -> bool:
+        # Keep the values of every decided Ticket in the Snapshots loaded now, so a decision carried forward
+        # to this export can be compared with them even after a relaunch drops those Snapshots.
+        for loaded in self.store.snapshots():
+            carry_forward.remember_decided(self.review, self.store, loaded["fingerprint"])
+        added = self.store.add_snapshot(snapshot, self.aliases(snapshot.fingerprint))
+        self.active_fingerprint = snapshot.fingerprint
+        return added
 
 
 class AsOfChange(BaseModel):
@@ -340,6 +351,57 @@ def create_app(state: AppState) -> FastAPI:
             imported = state.reimport()
         except WorkbookError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        return {"imported": imported, **header_payload()}
+
+    def same_as(fingerprint: str) -> str | None:
+        if fingerprint == state.active_fingerprint:
+            return "active"
+        return "loaded" if state.store.has_snapshot(fingerprint) else None
+
+    @app.post("/api/uploads")
+    async def upload_workbook(request: Request) -> dict:
+        """Receive an .xlsx workbook as the request body and preview it; nothing becomes active yet.
+
+        The file name comes in the X-Workbook-Name header. A custom header and
+        a non-form content type make a browser ask before sending this from
+        another site, and the Origin check refuses it if it does.
+        """
+        require_same_origin(request)
+        data_dir = state.review.path.parent
+        try:
+            name = uploads.clean_name(request.headers.get("x-workbook-name"))
+            stored, fingerprint, size = await uploads.receive(request.stream(), data_dir, request.headers.get("content-length"))
+        except uploads.UploadError as error:
+            raise HTTPException(status_code=error.status, detail=error.payload()) from error
+        try:
+            snapshot = await run_in_threadpool(import_workbook, stored, name)
+        except WorkbookError as error:
+            stored.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "refused", "field": "file", "message": str(error), "next_step": uploads.REFUSED_NEXT_STEP},
+            ) from error
+        state.previews[fingerprint] = (snapshot, size)
+        for stale in list(state.previews)[:-3]:
+            del state.previews[stale]
+        return {"preview": uploads.preview(snapshot, size, same_as(fingerprint), stored), **context(state.active_fingerprint)}
+
+    @app.post("/api/uploads/{upload_id}/activate")
+    async def activate_upload(upload_id: str, request: Request) -> dict:
+        """Make a previewed workbook the active Snapshot, beside the earlier ones."""
+        require_same_origin(request)
+        held = state.previews.get(upload_id)
+        if held is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "no_preview", "field": "id",
+                    "message": "no previewed workbook with this id; choose the workbook again",
+                    "next_step": uploads.REFUSED_NEXT_STEP,
+                },
+            )
+        imported = await run_in_threadpool(state.activate, held[0])
+        del state.previews[upload_id]
         return {"imported": imported, **header_payload()}
 
     @app.get("/api/snapshots")

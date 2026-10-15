@@ -42,6 +42,7 @@ import { ClaimedHoursByJob } from "./ClaimedHoursByJob";
 import { SubmissionTiming } from "./SubmissionTiming";
 import { SavedViews } from "./SavedViews";
 import { CarryForward } from "./CarryForward";
+import { WorkbookImport } from "./WorkbookImport";
 
 type Tab = "overview" | "explore";
 
@@ -324,6 +325,15 @@ export function App() {
           </p>
         )}
       </header>
+      {state.kind === "ready" ? (
+        <WorkbookImport
+          onActivated={(result) => {
+            setState({ kind: "ready", header: result });
+            setReimportStatus("");
+            setGeneration((value) => value + 1);
+          }}
+        />
+      ) : null}
 
       <nav aria-label="Primary">
         <div className="tabs" role="tablist" aria-label="Views">

@@ -65,27 +65,28 @@ export async function boot(workbook: string): Promise<RunningApp> {
 
 /**
  * Write a minimal same-schema workbook with tests/synthetic.py, for shapes the
- * committed export lacks. Each ticket is a number plus field overrides by name.
+ * committed export lacks. Each ticket is a number plus field overrides by name; `omit` leaves columns out.
  */
 export function writeWorkbook(
   path: string,
   tickets: { number: number; fields: Record<string, string | number | { literal: string }> }[],
+  omit: string[] = [],
 ): string {
   // `{ literal: "=..." }` writes text that begins with "=" as text rather than as a formula.
   const script = [
     "import json, sys",
     "from pathlib import Path",
     "sys.path.insert(0, 'tests')",
-    "from synthetic import Literal, ticket, write_workbook",
+    "from synthetic import Literal, ticket, without, write_workbook",
     "spec = json.load(sys.stdin)",
     "value = lambda v: Literal(v['literal']) if isinstance(v, dict) else v",
     "rows = [ticket(t['number'], **{k.replace(' ', '_'): value(v) for k, v in t['fields'].items()}) for t in spec['tickets']]",
-    "write_workbook(Path(spec['path']), rows)",
+    "write_workbook(Path(spec['path']), rows, fields=without(*spec['omit']))",
   ].join("\n");
   mkdirSync(dirname(path), { recursive: true });
   const result = spawnSync(PYTHON, ["-c", script], {
     cwd: REPO_ROOT,
-    input: JSON.stringify({ path, tickets }),
+    input: JSON.stringify({ path, tickets, omit }),
     encoding: "utf-8",
   });
   if (result.status !== 0) throw new Error(`could not write the workbook:\n${result.stderr}`);
