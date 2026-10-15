@@ -89,31 +89,34 @@ def fingerprint_workbook(path: Path) -> str:
     return digest.hexdigest()
 
 
-def import_workbook(path: Path) -> Snapshot:
+def import_workbook(path: Path, workbook_name: str | None = None) -> Snapshot:
+    """Read the workbook into a Snapshot; `workbook_name` is the name to show when the file is stored under another
+    (a browser upload). Formulas are kept as text, external links are not loaded and macros are never run."""
     if not path.is_file():
         raise WorkbookError(f"workbook not found: {path}")
+    name = workbook_name or path.name
     fingerprint = fingerprint_workbook(path)
     try:
         book = openpyxl.load_workbook(path, read_only=True, data_only=False, keep_links=False)
     except Exception as error:  # openpyxl raises several unrelated types
-        raise WorkbookError(f"workbook could not be read: {path.name} ({error})") from error
+        raise WorkbookError(f"workbook could not be read: {name} ({error})") from error
     try:
         found = _find_data_sheet(book)
         if found is None:
             raise WorkbookError(
-                f"workbook has no data sheet: {path.name} has no worksheet with a header row in row {HEADER_ROW}"
+                f"workbook has no data sheet: {name} has no worksheet with a header row in row {HEADER_ROW}"
             )
         sheet, fields, rows = found
         missing = missing_required_columns(fields)
         if missing:
             raise WorkbookError(
-                f"data sheet {sheet.title!r} in {path.name} is missing required "
+                f"data sheet {sheet.title!r} in {name} is missing required "
                 f"column{'s' if len(missing) > 1 else ''}: {', '.join(missing)}"
             )
         repeated = repeated_schema_columns(fields)
         if repeated:
             raise WorkbookError(
-                f"data sheet {sheet.title!r} in {path.name} names a column more than once, "
+                f"data sheet {sheet.title!r} in {name} names a column more than once, "
                 f"so its mapping is ambiguous: {', '.join(repeated)}"
             )
         tickets = _read_tickets(rows, fields)
@@ -122,7 +125,7 @@ def import_workbook(path: Path) -> Snapshot:
     return Snapshot(
         fingerprint=fingerprint,
         fingerprint_algorithm=FINGERPRINT_ALGORITHM,
-        workbook_name=path.name,
+        workbook_name=name,
         sheet=sheet.title,
         fields=fields,
         tickets=tuple(tickets),

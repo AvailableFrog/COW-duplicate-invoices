@@ -166,6 +166,21 @@ Measured on the environment above:
 
 `frontend/e2e/carry-forward.spec.ts` carries an unchanged outcome in one step and a changed one after the check, with an axe audit of the panel, and finds the carried outcome in the new Snapshot's drawer. It also declines a proposal and confirms it stays answered after a reload.
 
+## Browser import (release two, #41)
+
+`tests/test_browser_import.py` covers the following:
+
+- A different workbook is previewed with its sheet, counts, mapping, missing optional columns and disabled features. Nothing changes until it is activated; then it becomes the active Snapshot beside the old one, stored under its hash in the data directory.
+- Identical content previews as the active Snapshot and activating adds nothing.
+- A workbook missing a required column is refused with exactly the launch import's message, and nothing is kept.
+- Text files, non-.xlsx names, a missing name and a broken package are refused.
+- A 65 MB stream is refused while streaming.
+- Cross-site uploads and activations are refused.
+- Formulas stay as text.
+- Saved views and carry-forward see an activated upload as a new Snapshot.
+
+`frontend/e2e/browser-import.spec.ts` previews and activates a workbook with a missing optional column, with an axe audit of the panel. It also shows a refused workbook's reason and next step with the active Snapshot unchanged.
+
 ## Logs
 
 The service logs only warnings and never logs requests.

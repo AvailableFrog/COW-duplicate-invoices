@@ -175,6 +175,10 @@ code {
 .table-scroll:focus-visible,
 .reimport:focus-visible,
 .tabs button:focus-visible,
+.file-choice input:focus-visible,
+.upload-preview button:focus-visible,
+.carry-forward input:focus-visible,
+.carry-forward textarea:focus-visible,
 summary:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
@@ -2087,6 +2091,67 @@ input[type="date"]:focus-within {
 }
 
 .carry-forward summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+/* Importing a workbook from the browser (ticket #41). */
+.workbook-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 8px 0 0;
+}
+
+.workbook-import .file-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.workbook-import .file-choice input {
+  font-weight: normal;
+  max-width: 100%;
+}
+
+.workbook-import > .status,
+.workbook-import > .notice,
+.upload-preview {
+  flex-basis: 100%;
+}
+
+.upload-preview {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  background: var(--panel);
+  padding: 12px 16px;
+}
+
+.upload-preview h3 {
+  margin-top: 0;
+}
+
+.preview-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 8px 0;
+}
+
+.preview-facts dt {
+  font-weight: 600;
+}
+
+.preview-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.upload-preview summary {
   cursor: pointer;
   font-weight: 600;
   margin-top: 8px;
