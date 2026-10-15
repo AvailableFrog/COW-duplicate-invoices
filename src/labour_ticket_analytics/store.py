@@ -3,7 +3,9 @@
 Snapshot tables are rebuilt from the workbook on every launch and hold the
 source Tickets as cells with raw value, raw type, Excel row and dataframe
 index. Each Ticket's Time cell is also parsed once at import and the parse
-results are kept beside the tables, keyed by Excel row. The matching rules run
+results are kept beside the tables, keyed by Excel row, as are the
+Description-date exception's results; `ticket_checks` holds what the data
+readiness metrics count of both. The matching rules run
 at import too and their Candidates are stored as relationship edges, apart
 from the Tickets; Possible Duplicates are recomposed from them on every read.
 The rules run again over the whole Snapshot whenever its confirmed Aliases
@@ -23,11 +25,12 @@ from typing import Any, Iterable
 
 import duckdb
 
-from labour_ticket_analytics import evidence, flagged, metrics, normalized, rules
+from labour_ticket_analytics import description_dates, evidence, flagged, metrics, normalized, rules
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DATE_BASES, Filters
+from labour_ticket_analytics.description_dates import DescriptionDates
 from labour_ticket_analytics.timeparse import TimeParse, parse_time
-from labour_ticket_analytics.validation import APPROVAL_STATUSES
+from labour_ticket_analytics.validation import APPROVAL_STATUSES, date_value
 from labour_ticket_analytics.workbook import Cell, Snapshot, Ticket
 
 SCHEMA = """
@@ -84,6 +87,15 @@ CREATE TABLE candidates (
     pattern VARCHAR NOT NULL,
     PRIMARY KEY (snapshot_fingerprint, rule_id, first_row, second_row)
 );
+CREATE TABLE ticket_checks (
+    snapshot_fingerprint VARCHAR NOT NULL,
+    excel_row INTEGER NOT NULL,
+    time_status VARCHAR NOT NULL,
+    ambiguous_interval BOOLEAN NOT NULL,
+    description_date_status VARCHAR NOT NULL,
+    description_date_conflict BOOLEAN NOT NULL,
+    PRIMARY KEY (snapshot_fingerprint, excel_row)
+);
 """
 
 # Normalized values beside the raw cells: what metrics and filters read.
@@ -107,6 +119,15 @@ ISSUE_COLUMNS = {
     "field": "VARCHAR",
     "code": "VARCHAR",
     "message": "VARCHAR",
+}
+
+CHECK_COLUMNS = {
+    "snapshot_fingerprint": "VARCHAR",
+    "excel_row": "INTEGER",
+    "time_status": "VARCHAR",
+    "ambiguous_interval": "BOOLEAN",
+    "description_date_status": "VARCHAR",
+    "description_date_conflict": "BOOLEAN",
 }
 
 CELL_COLUMNS = {
@@ -136,6 +157,7 @@ class SnapshotStore:
         self.connection.execute(SCHEMA)
         self._lock = threading.RLock()
         self._time_parses: dict[str, dict[int, TimeParse]] = {}
+        self._description_dates: dict[str, dict[int, DescriptionDates]] = {}
         # The confirmed Aliases each Snapshot's stored Candidates were found under.
         self._aliases: dict[str, rules.Aliases] = {}
 
@@ -155,15 +177,28 @@ class SnapshotStore:
             if self.has_snapshot(snapshot.fingerprint):
                 return False
             time_parses = {ticket.excel_row: _parse_ticket_time(ticket) for ticket in snapshot.tickets}
+            dates = {ticket.excel_row: _check_description_dates(ticket) for ticket in snapshot.tickets}
             self.connection.execute("BEGIN TRANSACTION")
             try:
                 self._insert(snapshot)
+                self._bulk_insert(
+                    "ticket_checks",
+                    CHECK_COLUMNS,
+                    (
+                        (
+                            snapshot.fingerprint, row, time_parses[row].status, time_parses[row].has_ambiguous_interval,
+                            dates[row].status, dates[row].conflict,
+                        )
+                        for row in time_parses
+                    ),
+                )
                 rules.record_candidates(self.connection, snapshot.fingerprint, time_parses, aliases)
             except BaseException:
                 self.connection.execute("ROLLBACK")
                 raise
             self.connection.execute("COMMIT")
             self._time_parses[snapshot.fingerprint] = time_parses
+            self._description_dates[snapshot.fingerprint] = dates
             self._aliases[snapshot.fingerprint] = aliases
             return True
 
@@ -364,12 +399,91 @@ class SnapshotStore:
         group_by: str | None = None,
         include_rows: bool = False,
         replaced_rows: list[int] | tuple[int, ...] = (),
+        window: tuple[dt.date, dt.date] | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             return metrics.evaluate(
                 self.connection, fingerprint, self.fields(fingerprint), metric, filters, as_of, group_by, include_rows,
-                replaced_rows,
+                replaced_rows, window,
             )
+
+    def default_reporting_window(self, fingerprint: str) -> tuple[dt.date, dt.date] | None:
+        """The years Created covers, 1 January of the first to 31 December of the last; None when no Created is usable."""
+        with self._lock:
+            first, last = self.connection.execute(
+                "SELECT year(min(created)), year(max(created)) FROM ticket_values WHERE snapshot_fingerprint = ?",
+                [fingerprint],
+            ).fetchone()
+        if first is None:
+            return None
+        return dt.date(first, 1, 1), dt.date(last, 12, 31)
+
+    def readiness_tickets(self, fingerprint: str, filters: Filters, excel_rows: list[int]) -> list[dict[str, Any]]:
+        """The given Tickets, in order, with their source state and what the data readiness checks read of them:
+        the Time parse, the Description-date result, import issues, usable dates, the Rate cell and claimed hours."""
+        if not excel_rows:
+            return []
+        with self._lock:
+            members = self._members(fingerprint, filters, "list_contains($rows, t.excel_row)", {"rows": list(excel_rows)})
+            values = {
+                row[0]: row[1:]
+                for row in self.connection.execute(
+                    "SELECT excel_row, work_date, created, date_approved, regular_hours + overtime + double_time"
+                    " FROM ticket_values WHERE snapshot_fingerprint = ? AND list_contains(?, excel_row)",
+                    [fingerprint, list(excel_rows)],
+                ).fetchall()
+            }
+            rates = {
+                row[0]: _cell_payload(row[1:])
+                for row in self.connection.execute(
+                    "SELECT excel_row, field, position, raw_type, value_text, value_integer, value_number, value_boolean,"
+                    " value_timestamp, number_format FROM cells"
+                    " WHERE snapshot_fingerprint = ? AND field = 'Rate' AND list_contains(?, excel_row)",
+                    [fingerprint, list(excel_rows)],
+                ).fetchall()
+            }
+            issues: dict[int, list[dict[str, Any]]] = {}
+            for row in self.connection.execute(
+                "SELECT excel_row, field, code, message FROM import_issues"
+                " WHERE snapshot_fingerprint = ? AND list_contains(?, excel_row) ORDER BY issue_order",
+                [fingerprint, list(excel_rows)],
+            ).fetchall():
+                issues.setdefault(row[0], []).append({"field": row[1], "code": row[2], "message": row[3]})
+            parses = self._time_parses[fingerprint]
+            dates = self._description_dates[fingerprint]
+        tickets = []
+        for row in excel_rows:
+            work_date, created, approved, hours = values[row]
+            rate = rates.get(row)
+            tickets.append({
+                **members[row],
+                "time_parse": parses[row].payload(),
+                "description_dates": dates[row].payload(),
+                "issues": issues.get(row, []),
+                "dates": {
+                    "Date": _iso(work_date.date()) if work_date else None,
+                    "Created": _iso(created.date()) if created else None,
+                    "Date Approved": _iso(approved.date()) if approved else None,
+                },
+                "rate": {"raw_type": rate["raw_type"], "value": rate["value"]} if rate else None,
+                "claimed_hours": _plain_number(hours),
+            })
+        return tickets
+
+    def members_inside(self, fingerprint: str, filters: Filters, excel_rows: Iterable[int]) -> dict[int, bool]:
+        """Whether each given Ticket is inside the filters, by Excel row."""
+        with self._lock:
+            members = self._members(fingerprint, filters, "list_contains($rows, t.excel_row)", {"rows": list(excel_rows)})
+        return {row: member["in_filter"] for row, member in members.items()}
+
+    def possible_duplicate_name(self, fingerprint: str, excel_row: int, filters: Filters) -> str | None:
+        """The display name of the possible duplicate holding a Ticket, or None when it is in none."""
+        rows = self.possible_duplicate_rows(fingerprint, excel_row)
+        if not rows:
+            return None
+        with self._lock:
+            linked = self._candidate_members(fingerprint, filters)
+        return rules.display_id([linked[row] for row in rows])
 
     def status_counts(self, fingerprint: str, excel_rows: list[int]) -> list[dict[str, Any]]:
         """How many of the given Tickets carry each Approval Status, most first; an unreadable status counts as null."""
@@ -469,7 +583,10 @@ class SnapshotStore:
             rows = self.possible_duplicate_rows(fingerprint, excel_row)
             linked = self._candidate_members(fingerprint, filters)
         display_id = rules.display_id([linked[row] for row in rows]) if rows else None
-        return evidence.ticket_evidence(members[excel_row], ticket, parses[excel_row], display_id, ANNOTATIONS)
+        return evidence.ticket_evidence(
+            members[excel_row], ticket, parses[excel_row], self._description_dates[fingerprint][excel_row], display_id,
+            ANNOTATIONS,
+        )
 
     def possible_duplicate_evidence(
         self, fingerprint: str, excel_row: int, filters: Filters, settled_pairs: set[tuple[int, int]] = frozenset(),
@@ -492,8 +609,10 @@ class SnapshotStore:
                 return None
             item = rules.possible_duplicate(component, self._candidate_members(fingerprint, filters), settled_pairs)
             tickets = [self._ticket(fingerprint, member["excel_row"]) for member in item["members"]]
-            parses = {member["excel_row"]: self._time_parses[fingerprint][member["excel_row"]] for member in item["members"]}
-        return evidence.evidence(item, tickets, parses, ANNOTATIONS)
+            rows = [member["excel_row"] for member in item["members"]]
+            parses = {row: self._time_parses[fingerprint][row] for row in rows}
+            dates = {row: self._description_dates[fingerprint][row] for row in rows}
+        return evidence.evidence(item, tickets, parses, dates, ANNOTATIONS)
 
     def pair_explanation(
         self, fingerprint: str, first_row: int, second_row: int, filters: Filters
@@ -520,9 +639,10 @@ class SnapshotStore:
                 if component_rows & set(rows):
                     name = rules.display_id([linked[row] for row in component_rows])
                     display_ids.update(dict.fromkeys(component_rows & set(rows), name))
+            dates = {row: self._description_dates[fingerprint][row] for row in rows}
         explanation = rules.explain(facts[rows[0]], facts[rows[1]], aliases)
         return evidence.pair_explanation(
-            explanation, [members[row] for row in rows], tickets, parses, display_ids, ANNOTATIONS
+            explanation, [members[row] for row in rows], tickets, parses, dates, display_ids, ANNOTATIONS
         )
 
     def excel_rows_by_ticket_number(self, fingerprint: str, ticket_numbers: Iterable[str]) -> dict[str, int]:
@@ -696,6 +816,23 @@ def _cell_row(fingerprint: str, excel_row: int, cell: Cell) -> tuple[Any, ...]:
 def _parse_ticket_time(ticket: Ticket) -> TimeParse:
     time = next(cell for cell in ticket.cells if cell.field == "Time")
     return parse_time(time.raw_type, time.value)
+
+
+def _check_description_dates(ticket: Ticket) -> DescriptionDates:
+    """The Description-date exception for one Ticket; disabled when the workbook has no description column."""
+    cells = {cell.field: cell for cell in ticket.cells}
+    description = cells.get(description_dates.DESCRIPTION_FIELD)
+    work_date = date_value(cells["Date"]) if "Date" in cells else None
+    return description_dates.check(
+        description.raw_type if description is not None else None,
+        description.value if description is not None else None,
+        work_date.date() if work_date is not None else None,
+    )
+
+
+def _plain_number(value: float | None) -> float | int | None:
+    """A whole-valued float as an int, so 8.0 hours reads as 8."""
+    return int(value) if value is not None and float(value).is_integer() else value
 
 
 def _iso(value: dt.date | None) -> str | None:

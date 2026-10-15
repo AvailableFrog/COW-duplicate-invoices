@@ -17,7 +17,9 @@ read. Their display identifier is derived from the sorted member ticket
 numbers and is never a storage key (ADR 0004).
 
 Changing any rule, its fields or its reason means bumping RULE_VERSION,
-because every numeric response carries it.
+because every numeric response carries it. The Description-date exception
+(description_dates.py) is versioned with the rules too, though it never
+creates a Candidate.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ import duckdb
 
 from labour_ticket_analytics.timeparse import TimeParse, compare
 
-RULE_VERSION = "1.3.0"
+RULE_VERSION = "1.4.0"
 
 # The Strict repeat key: source field -> normalized column. Never ID, Ticket
 # Number, timestamps, supervisor or description, which can differ between
@@ -88,8 +90,10 @@ SAME_CLAIM_AS_DIFFERENT_TEXT = Pattern("same_claim_as_different_text", 2, "Same 
 CORRECTION_OR_RESUBMISSION = Pattern("correction_or_resubmission", 3, "Possible correction or resubmission")
 EQUAL_DURATION_SEPARATE_PERIODS = Pattern("equal_duration_separate_periods", 4, "Equal duration, separate periods")
 REPEATED_PAYMENT_COMPONENT = Pattern("repeated_payment_component", 5, "Repeated payment component")
-# The patterns a Candidate can carry, in PRD order. Pattern 6 (Service date in description) never links two
-# Tickets on its own, so no Candidate carries it.
+# Pattern 6 belongs to the Description-date exception (description_dates.py), a Ticket-level exception that
+# never links two Tickets, so no Candidate carries it.
+SERVICE_DATE_IN_DESCRIPTION = Pattern("service_date_in_description", 6, "Service date in description")
+# The patterns a Candidate can carry, in PRD order; pattern 6 is not among them.
 PATTERNS: tuple[Pattern, ...] = (
     SAME_CLAIM_TWICE, SAME_CLAIM_AS_DIFFERENT_TEXT, CORRECTION_OR_RESUBMISSION, EQUAL_DURATION_SEPARATE_PERIODS,
     REPEATED_PAYMENT_COMPONENT,

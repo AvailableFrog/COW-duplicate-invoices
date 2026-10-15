@@ -124,6 +124,11 @@ class TimeParse:
     periods: tuple[Period, ...] = ()
     notes: tuple[str, ...] = ()
 
+    @property
+    def has_ambiguous_interval(self) -> bool:
+        """Whether any period lacks AM/PM: an Ambiguous Interval, flagged or not."""
+        return any(period.confidence == "ambiguous" for period in self.periods)
+
     def confident_intervals(self) -> list[Interval]:
         """The union of this Ticket's Confident Intervals, merged and in order."""
         return _union(period.interval for period in self.periods if period.interval is not None)

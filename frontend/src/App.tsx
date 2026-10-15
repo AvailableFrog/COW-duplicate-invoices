@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   changeAsOf,
+  DEFAULT_REPORTING_WINDOW,
+  fetchDataReadiness,
   fetchFilterOptions,
   fetchFlaggedDuplicates,
   fetchHeader,
@@ -12,17 +14,20 @@ import {
   NO_FILTERS,
   NO_PATTERN_FILTER,
   reimportWorkbook,
+  type DataReadinessResponse,
   type FilterOptions,
   type FilterState,
   type FlaggedDuplicatesResponse,
   type PatternFilterState,
   type HeaderResponse,
   type ProcessingQueueResponse,
+  type ReportingWindowState,
   type ReviewPrioritiesResponse,
   type TilesResponse,
   type ValueContextResponse,
 } from "./api";
 import { CompareTickets, type OpenPair } from "./CompareTickets";
+import { DataReadiness, type OpenReadinessAlias, type OpenReadinessTicket } from "./DataReadiness";
 import { EvidenceDrawer, type DrawerTarget } from "./EvidenceDrawer";
 import { ActiveFilters, FilterBar } from "./FilterBar";
 import { FlaggedDuplicates, type OpenFlagged } from "./FlaggedDuplicates";
@@ -56,6 +61,10 @@ export function App() {
   const [flaggedError, setFlaggedError] = useState("");
   const [queue, setQueue] = useState<ProcessingQueueResponse | null>(null);
   const [queueError, setQueueError] = useState("");
+  const [readiness, setReadiness] = useState<DataReadinessResponse | null>(null);
+  const [readinessError, setReadinessError] = useState("");
+  // The data readiness view's reporting window; a null end follows the default, the years Created covers.
+  const [reportingWindow, setReportingWindow] = useState<ReportingWindowState>(DEFAULT_REPORTING_WINDOW);
   const [value, setValue] = useState<ValueContextResponse | null>(null);
   const [valueError, setValueError] = useState("");
   // Bumped whenever the Snapshot or as-of date changes, so every view refetches its numbers.
@@ -108,6 +117,21 @@ export function App() {
       excelRow: ticket.excel_row,
       title: `${population} ticket ${ticket.ticket_number ?? `row ${ticket.excel_row}`}`,
     });
+  };
+
+  const openReadinessTicket: OpenReadinessTicket = (row, fingerprint, opener) => {
+    drawerOpener.current = opener;
+    setDrawer({ kind: "ticket", fingerprint, excelRow: row.excel_row, title: `Ticket ${row.ticket_number ?? `row ${row.excel_row}`}` });
+  };
+
+  const openReadinessAlias: OpenReadinessAlias = (row, fingerprint, opener) => {
+    drawerOpener.current = opener;
+    // The proposal is decided in the possible duplicate of its proposing tickets, addressed by one of them.
+    setDrawer(
+      row.possible_duplicate
+        ? { kind: "possible_duplicate", fingerprint, excelRow: row.excel_row, displayId: row.possible_duplicate }
+        : { kind: "ticket", fingerprint, excelRow: row.excel_row, title: `Ticket row ${row.excel_row}` },
+    );
   };
 
   const openPair: OpenPair = (rows, opener) => {
@@ -229,6 +253,21 @@ export function App() {
 
   useEffect(() => {
     const controller = new AbortController();
+    fetchDataReadiness(filters, reportingWindow, controller.signal)
+      .then((data) => {
+        setReadiness(data);
+        setReadinessError("");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setReadinessError(error instanceof Error ? error.message : String(error));
+      });
+    return () => controller.abort();
+    // A confirmed or rejected Alias drops out of the unresolved name proposals.
+  }, [filters, reportingWindow, generation, reviewGeneration]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     fetchValueContext(filters, controller.signal)
       .then((data) => {
         setValue(data);
@@ -329,7 +368,23 @@ export function App() {
               <p className="status">Loading the processing queue…</p>
             )}
             {state.kind === "ready" ? <CompareTickets rowCount={state.header.snapshot.row_count} onCompare={openPair} /> : null}
-            <p className="placeholder">The data readiness view arrives with a later ticket.</p>
+            {readinessError ? (
+              <p className="notice notice-error" role="alert">
+                The data readiness counts could not be loaded: {readinessError}. Change the filters or the reporting
+                window, or reload the page.
+              </p>
+            ) : readiness ? (
+              <DataReadiness
+                data={readiness}
+                filters={filters}
+                reportingWindow={reportingWindow}
+                onWindowChange={setReportingWindow}
+                onOpenTicket={openReadinessTicket}
+                onOpenAlias={openReadinessAlias}
+              />
+            ) : (
+              <p className="status">Loading the data readiness counts…</p>
+            )}
             {valueError ? (
               <p className="notice notice-error" role="alert">
                 The value context could not be loaded: {valueError}. Change the filters or reload the page.

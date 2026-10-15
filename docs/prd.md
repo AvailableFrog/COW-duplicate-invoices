@@ -120,7 +120,7 @@ Avoid a pie chart partitioning all tickets into â€œduplicates / not duplicatesâ€
 | P0 | Review priorities | Which apparent repeats or conflicting claims warrant inspection? | Ranked case list beside a pattern-by-source-state count matrix; click opens comparison |
 | P0 | Flagged duplicates | Which tickets did staff flag as duplicates, and can we identify the retained claim? | 28-record tile and filter; counterpart found / unresolved relationship shown separately |
 | P0 | Processing queue | What is Pending, or Approved but not Keyed, and how old are those submissions? | Separate horizontal age-bucket bars; click reveals tickets and dates |
-| P0 | Data readiness | Which records cannot be reliably compared or valued? | Compact issue counts for ambiguous times, anomalous dates, unresolved identity, missing rates, and missing required fields |
+| P0 | Data readiness | Which records cannot be reliably compared or valued? | Compact issue counts for ambiguous times, anomalous dates, unresolved identity, missing rates, and missing required fields, plus description-date conflicts shown as their own count (decision-log entries 68-71) |
 | P1 | Claimed work by job | Where are the reported hours concentrated? | Top-ten horizontal bars, explicit Other category, optional employee-label count or ticket count |
 | P1 | Submission and review timing | Are claims entered late or awaiting disposition? | Weekly Created counts by current status; submission-lag distribution and observed approval-interval distribution |
 | P1 | Value context | What is the scale of recorded claims and selected candidates? | Three small values with completeness note and formula, collapsed by default |

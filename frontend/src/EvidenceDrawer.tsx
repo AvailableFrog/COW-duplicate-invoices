@@ -17,6 +17,7 @@ import {
   type TimeComparison,
   type TimeParse,
 } from "./api";
+import { DescriptionReference } from "./DataReadiness";
 import { ReviewPanel } from "./ReviewPanel";
 
 /**
@@ -318,7 +319,12 @@ function SingleTicketEvidence({ data }: { data: TicketEvidence }) {
           {member.flagged_duplicate ? "Staff flagged this ticket as a duplicate (Approved with Job Number 0). " : ""}
           {data.possible_duplicate
             ? `It is in ${data.possible_duplicate}.`
-            : "No matching rule links it to another ticket, so it is in no possible duplicate and its counterpart is unresolved."}
+            : member.flagged_duplicate
+              ? "No matching rule links it to another ticket, so it is in no possible duplicate and its counterpart is unresolved."
+              : "No matching rule links it to another ticket, so it is in no possible duplicate."}
+          {member.description_dates.conflict
+            ? " Its description names a date that differs from Date; see Dates in the description."
+            : ""}
         </p>
       </section>
 
@@ -439,6 +445,8 @@ function SharedEvidence({ data }: { data: ShownEvidence }) {
         </ul>
       </section>
 
+      <DescriptionDatesSection members={data.members} />
+
       <section aria-labelledby="drawer-provenance">
         <h3 id="drawer-provenance">Where each ticket comes from</h3>
         <ul className="provenance">
@@ -459,6 +467,61 @@ function SharedEvidence({ data }: { data: ShownEvidence }) {
         </ul>
       </section>
     </>
+  );
+}
+
+/**
+ * The Description-date exception for each ticket shown: the dates its description names, how each reads and whether
+ * it differs from Date. Shown when a description names a date or the check is disabled; it never changes Date and
+ * never links tickets.
+ */
+function DescriptionDatesSection({ members }: { members: EvidenceMember[] }) {
+  const disabled = members.some((member) => member.description_dates.status === "disabled");
+  const named = members.filter((member) => member.description_dates.references.length > 0);
+  if (!disabled && named.length === 0) return null;
+  const pattern = members[0].description_dates.pattern;
+  return (
+    <section aria-labelledby="drawer-description-dates">
+      <h3 id="drawer-description-dates">Dates in the description</h3>
+      <p className="muted">
+        Pattern {pattern.number}: {pattern.label}. A date written in the description is shown beside Date, never in its
+        place, and on its own it never links tickets.
+      </p>
+      {disabled ? (
+        <p className="unresolved">{members[0].description_dates.note}</p>
+      ) : (
+        <ul className="parse-cards">
+          {named.map((member) => {
+            const result = member.description_dates;
+            return (
+              <li key={member.excel_row} className="parse-card">
+                <p>
+                  <strong>{memberHeading(member)}</strong> <span className="muted num">row {member.excel_row}</span> · Date{" "}
+                  <span className="num">{result.date ?? "not usable"}</span>, kept as recorded
+                  {result.conflict ? <span className="tag">date conflict</span> : null}
+                </p>
+                <ul className="readiness-detail">
+                  {result.references.map((reference) => (
+                    <li key={reference.start}>
+                      <DescriptionReference reference={reference} />
+                      {reference.notes.map((note) => (
+                        <span key={note} className="muted">
+                          {" "}
+                          {note}
+                        </span>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+                <p className="muted">
+                  {result.note} Rules version <span className="num">{result.rule_version}</span>.
+                </p>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 

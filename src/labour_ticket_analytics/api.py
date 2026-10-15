@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
-from labour_ticket_analytics import flagged, pattern_matrix, processing_queue, value_context
+from labour_ticket_analytics import data_readiness, flagged, pattern_matrix, processing_queue, value_context
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, Metric, MetricError, registry_payload
@@ -215,6 +215,48 @@ def create_app(state: AppState) -> FastAPI:
         except MetricError as error:
             raise metric_failure(error) from error
 
+    def reporting_window(
+        fingerprint: str, window_from: dt.date | None, window_to: dt.date | None,
+    ) -> data_readiness.ReportingWindow | None:
+        """The reporting window asked for, each end defaulting to the years Created covers; 422 when reversed."""
+        try:
+            return data_readiness.ReportingWindow.build(
+                state.store.default_reporting_window(fingerprint), window_from, window_to,
+            )
+        except FilterError as error:
+            raise HTTPException(status_code=422, detail=error.payload()) from error
+
+    def window_bounds(window: data_readiness.ReportingWindow | None) -> tuple[dt.date, dt.date] | None:
+        return window.bounds if window is not None else None
+
+    def unresolved_aliases(fingerprint: str, filters: Filters) -> list[dict]:
+        """Proposed Aliases nobody has confirmed or rejected, any of whose proposing Tickets is inside the filters."""
+        aliases = state.review.aliases(fingerprint, state.store.alias_proposals(fingerprint).values())
+        rows = {row for alias in aliases for pair in alias["proposed_by"] for row in pair}
+        return data_readiness.unresolved_aliases(aliases, state.store.members_inside(fingerprint, filters, rows))
+
+    def readiness_rows(
+        fingerprint: str,
+        filters: Filters,
+        check: data_readiness.Check,
+        window: data_readiness.ReportingWindow | None,
+    ) -> tuple[dict | None, list[dict]]:
+        """A readiness check's metric result (None for the Alias proposals) and exactly the rows it counts."""
+        if check.metric_id is None:
+            aliases = unresolved_aliases(fingerprint, filters)
+            numbers = state.store.ticket_numbers(
+                fingerprint, {row for alias in aliases for pair in alias["proposed_by"] for row in pair},
+            )
+            return None, [
+                data_readiness.alias_row(
+                    alias, numbers, lambda row: state.store.possible_duplicate_name(fingerprint, row, filters),
+                )
+                for alias in aliases
+            ]
+        result = evaluate(fingerprint, check.metric_id, filters, include_rows=True, window=window_bounds(window))
+        tickets = state.store.readiness_tickets(fingerprint, filters, result.get("contributing_rows", []))
+        return result, [data_readiness.ticket_row(check, ticket, window) for ticket in tickets]
+
     def metric_failure(error: MetricError) -> HTTPException:
         return HTTPException(status_code=error.status, detail=error.payload())
 
@@ -302,11 +344,23 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/api/metrics/{metric_id}")
     def metric_value(
-        metric_id: str, query: dict = Depends(filter_query), group_by: str | None = None, rows: bool = False
+        metric_id: str,
+        query: dict = Depends(filter_query),
+        group_by: str | None = None,
+        rows: bool = False,
+        window_from: dt.date | None = None,
+        window_to: dt.date | None = None,
     ) -> dict:
         fingerprint = state.active_fingerprint
         filters = active_filters(fingerprint, query)
-        return {**evaluate(fingerprint, metric_id, filters, group_by=group_by, include_rows=rows), **context(fingerprint)}
+        options: dict = {"group_by": group_by, "include_rows": rows}
+        if registry_metric(metric_id).reads_reporting_window:
+            window = reporting_window(fingerprint, window_from, window_to)
+            options["window"] = window_bounds(window)
+            extra = {"reporting_window": window.payload() if window else None}
+        else:
+            extra = {}
+        return {**evaluate(fingerprint, metric_id, filters, **options), **extra, **context(fingerprint)}
 
     @app.get("/api/metrics/{metric_id}/buckets/{bucket_id}")
     def metric_bucket(metric_id: str, bucket_id: str, query: dict = Depends(filter_query)) -> dict:
@@ -349,6 +403,67 @@ def create_app(state: AppState) -> FastAPI:
             **value_context.panel(
                 results, reviewed, replaced_rows, lambda rows: state.store.status_counts(fingerprint, rows),
             ),
+            "filters": filters.payload(),
+            **context(fingerprint),
+        }
+
+    @app.get("/api/overview/data-readiness")
+    def data_readiness_view(
+        query: dict = Depends(filter_query), window_from: dt.date | None = None, window_to: dt.date | None = None,
+    ) -> dict:
+        """The readiness counts under the filters and reporting window, each from the registry or the Alias proposals."""
+        fingerprint = state.active_fingerprint
+        filters = active_filters(fingerprint, query)
+        window = reporting_window(fingerprint, window_from, window_to)
+        checks = []
+        for check in data_readiness.CHECKS:
+            if check.metric_id is None:
+                checks.append(data_readiness.summary_item(check, None, len(unresolved_aliases(fingerprint, filters)), None))
+            elif check.id in data_readiness.SUMMARISED:
+                result, rows = readiness_rows(fingerprint, filters, check, window)
+                checks.append(data_readiness.summary_item(check, result, None, data_readiness.summary(check, rows)))
+            else:
+                result = evaluate(fingerprint, check.metric_id, filters, window=window_bounds(window))
+                checks.append(data_readiness.summary_item(check, result, None, None))
+        return {
+            "title": data_readiness.TITLE,
+            "question": data_readiness.QUESTION,
+            "note": data_readiness.NOTE,
+            "checks": checks,
+            "reporting_window": window.payload() if window else None,
+            "filters": filters.payload(),
+            **context(fingerprint),
+        }
+
+    @app.get("/api/overview/data-readiness/{check_id}")
+    def data_readiness_drilldown(
+        check_id: str,
+        query: dict = Depends(filter_query),
+        window_from: dt.date | None = None,
+        window_to: dt.date | None = None,
+    ) -> dict:
+        """Exactly the rows one readiness count counts, under the same filters, window and Snapshot."""
+        check = data_readiness.CHECK_BY_ID.get(check_id)
+        if check is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "unknown_check", "field": "check_id",
+                    "message": f"no readiness check {check_id!r}; checks: "
+                    + ", ".join(item.id for item in data_readiness.CHECKS),
+                },
+            )
+        fingerprint = state.active_fingerprint
+        filters = active_filters(fingerprint, query)
+        window = reporting_window(fingerprint, window_from, window_to)
+        result, rows = readiness_rows(fingerprint, filters, check, window)
+        return {
+            "check": data_readiness.summary_item(
+                check, result, len(rows) if result is None else None, data_readiness.summary(check, rows),
+            ),
+            "count": len(rows),
+            "rows": rows,
+            "reporting_window": window.payload() if window else None,
             "filters": filters.payload(),
             **context(fingerprint),
         }

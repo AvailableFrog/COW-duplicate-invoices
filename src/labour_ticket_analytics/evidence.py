@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from labour_ticket_analytics.annotations import Annotations
+from labour_ticket_analytics.description_dates import DescriptionDates
 from labour_ticket_analytics.rules import RULES
 from labour_ticket_analytics.timeparse import TimeParse, compare
 
@@ -30,15 +31,16 @@ def evidence(
     possible_duplicate: dict[str, Any],
     tickets: list[dict[str, Any]],
     parses: dict[int, TimeParse],
+    description_dates: dict[int, DescriptionDates],
     annotations: Annotations,
 ) -> dict[str, Any]:
     """The drawer payload for one Possible Duplicate.
 
     `possible_duplicate` is the composed item the Review priorities list shows,
-    `tickets` its members' fetched Tickets in member order, and `parses` their
-    Time parse results by Excel row.
+    `tickets` its members' fetched Tickets in member order, and `parses` and
+    `description_dates` their Time parse and Description-date results by Excel row.
     """
-    shown = _shown(possible_duplicate["members"], tickets, parses, annotations)
+    shown = _shown(possible_duplicate["members"], tickets, parses, description_dates, annotations)
     return {
         "display_id": possible_duplicate["display_id"],
         "tier": possible_duplicate["tier"],
@@ -57,6 +59,7 @@ def pair_explanation(
     members: list[dict[str, Any]],
     tickets: list[dict[str, Any]],
     parses: dict[int, TimeParse],
+    description_dates: dict[int, DescriptionDates],
     display_ids: dict[int, str],
     annotations: Annotations,
 ) -> dict[str, Any]:
@@ -70,7 +73,7 @@ def pair_explanation(
     first, second = (member["excel_row"] for member in members)
     shown = _shown(
         [{**member, "possible_duplicate": display_ids.get(member["excel_row"])} for member in members],
-        tickets, parses, annotations,
+        tickets, parses, description_dates, annotations,
     )
     together = display_ids.get(first)
     return {
@@ -86,21 +89,30 @@ def ticket_evidence(
     member: dict[str, Any],
     ticket: dict[str, Any],
     parse: TimeParse,
+    description_dates: DescriptionDates,
     display_id: str | None,
     annotations: Annotations,
 ) -> dict[str, Any]:
     """One Ticket's evidence on its own, with the possible duplicate it is in (`display_id`), if any."""
+    row = member["excel_row"]
     return {
-        "excel_row": member["excel_row"],
+        "excel_row": row,
         "possible_duplicate": display_id,
-        **_shown([{**member, "possible_duplicate": display_id}], [ticket], {member["excel_row"]: parse}, annotations),
+        **_shown(
+            [{**member, "possible_duplicate": display_id}], [ticket], {row: parse}, {row: description_dates}, annotations,
+        ),
     }
 
 
 def _shown(
-    members: list[dict[str, Any]], tickets: list[dict[str, Any]], parses: dict[int, TimeParse], annotations: Annotations
+    members: list[dict[str, Any]],
+    tickets: list[dict[str, Any]],
+    parses: dict[int, TimeParse],
+    description_dates: dict[int, DescriptionDates],
+    annotations: Annotations,
 ) -> dict[str, Any]:
-    """The evidence shown for any set of Tickets: members with provenance and Time, timeline, source table, Annotations."""
+    """The evidence shown for any set of Tickets: members with provenance, Time and description dates, timeline,
+    source table, Annotations. Description dates are shown beside Date and never replace it."""
     members = [
         {
             **member,
@@ -112,6 +124,7 @@ def _shown(
             },
             "issues": ticket["issues"],
             "time_parse": parses[member["excel_row"]].payload(),
+            "description_dates": description_dates[member["excel_row"]].payload(),
         }
         for member, ticket in zip(members, tickets)
     ]
