@@ -6,6 +6,7 @@ import { defineConfig } from "vite";
 // work and proxies API calls to a running backend; a reviewer never needs it.
 export default defineConfig({
   plugins: [react()],
-  build: { outDir: "dist", emptyOutDir: true },
+  // Vega is a lazily loaded chunk of about 520 kB, read from loopback, so the default 500 kB warning is raised.
+  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 600 },
   server: { host: "127.0.0.1", proxy: { "/api": "http://127.0.0.1:8765" } },
 });

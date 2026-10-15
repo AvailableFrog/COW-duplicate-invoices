@@ -369,6 +369,15 @@ class SnapshotStore:
                 self.connection, fingerprint, self.fields(fingerprint), metric, filters, as_of, group_by, include_rows
             )
 
+    def metric_bucket_rows(
+        self, fingerprint: str, metric: metrics.Metric, filters: Filters, as_of: dt.date, bucket_id: str
+    ) -> dict[str, Any]:
+        """The Tickets one bucket of a metric counts; raises MetricError for an unknown bucket."""
+        with self._lock:
+            return metrics.bucket_rows(
+                self.connection, fingerprint, self.fields(fingerprint), metric, filters, as_of, bucket_id
+            )
+
     def filter_options(self, fingerprint: str) -> dict[str, Any]:
         """What the filter bar can offer for a Snapshot: date bases with their spans, statuses and jobs."""
         with self._lock:

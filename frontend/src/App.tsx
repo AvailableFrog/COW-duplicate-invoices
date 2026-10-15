@@ -5,6 +5,7 @@ import {
   fetchFilterOptions,
   fetchFlaggedDuplicates,
   fetchHeader,
+  fetchProcessingQueue,
   fetchReviewPriorities,
   fetchTiles,
   NO_FILTERS,
@@ -13,6 +14,7 @@ import {
   type FilterState,
   type FlaggedDuplicatesResponse,
   type HeaderResponse,
+  type ProcessingQueueResponse,
   type ReviewPrioritiesResponse,
   type TilesResponse,
 } from "./api";
@@ -21,6 +23,7 @@ import { EvidenceDrawer, type DrawerTarget } from "./EvidenceDrawer";
 import { ActiveFilters, FilterBar } from "./FilterBar";
 import { FlaggedDuplicates, type OpenFlagged } from "./FlaggedDuplicates";
 import { HeaderTiles } from "./HeaderTiles";
+import { ProcessingQueue, type OpenQueueTicket } from "./ProcessingQueue";
 import { ReviewPriorities, type OpenEvidence } from "./ReviewPriorities";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
 
@@ -44,6 +47,8 @@ export function App() {
   const [prioritiesError, setPrioritiesError] = useState("");
   const [flagged, setFlagged] = useState<FlaggedDuplicatesResponse | null>(null);
   const [flaggedError, setFlaggedError] = useState("");
+  const [queue, setQueue] = useState<ProcessingQueueResponse | null>(null);
+  const [queueError, setQueueError] = useState("");
   // Bumped whenever the Snapshot or as-of date changes, so every view refetches its numbers.
   const [generation, setGeneration] = useState(0);
   // Bumped after a review save so the ranked list shows the outcomes and the tiers a settled counterpart moves;
@@ -83,6 +88,17 @@ export function App() {
             title: `Flagged duplicate ${item.ticket_number ?? `row ${item.excel_row}`}`,
           },
     );
+  };
+
+  const openQueueTicket: OpenQueueTicket = (ticket, population, fingerprint, opener) => {
+    drawerOpener.current = opener;
+    // The Ticket on its own, addressed by the Snapshot its bucket was listed from and its Excel row.
+    setDrawer({
+      kind: "ticket",
+      fingerprint,
+      excelRow: ticket.excel_row,
+      title: `${population} ticket ${ticket.ticket_number ?? `row ${ticket.excel_row}`}`,
+    });
   };
 
   const openPair: OpenPair = (rows, opener) => {
@@ -188,6 +204,20 @@ export function App() {
     return () => controller.abort();
   }, [filters, generation, reviewGeneration]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchProcessingQueue(filters, controller.signal)
+      .then((data) => {
+        setQueue(data);
+        setQueueError("");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setQueueError(error instanceof Error ? error.message : String(error));
+      });
+    return () => controller.abort();
+  }, [filters, generation]);
+
   return (
     <div className="app">
       <header className="masthead">
@@ -261,8 +291,17 @@ export function App() {
             ) : (
               <p className="status">Loading the flagged duplicates…</p>
             )}
+            {queueError ? (
+              <p className="notice notice-error" role="alert">
+                The processing queue could not be loaded: {queueError}. Change the filters or reload the page.
+              </p>
+            ) : queue ? (
+              <ProcessingQueue data={queue} filters={filters} onOpen={openQueueTicket} />
+            ) : (
+              <p className="status">Loading the processing queue…</p>
+            )}
             {state.kind === "ready" ? <CompareTickets rowCount={state.header.snapshot.row_count} onCompare={openPair} /> : null}
-            <p className="placeholder">The processing queue and data readiness views arrive with later tickets.</p>
+            <p className="placeholder">The data readiness view arrives with a later ticket.</p>
           </section>
         ) : (
           <section aria-labelledby="explore-heading">

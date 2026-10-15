@@ -19,7 +19,7 @@ import duckdb
 from labour_ticket_analytics.filters import DATE_BASES, Filters
 from labour_ticket_analytics.rules import IN_CANDIDATE_SQL, STRICT_KEY, strict_groups_sql
 
-REGISTRY_VERSION = "1.2.0"
+REGISTRY_VERSION = "1.3.0"
 
 # Grouping dimension ID (the source column) -> normalized column.
 DIMENSIONS = {
@@ -72,6 +72,49 @@ class Partial:
 
 
 @dataclass(frozen=True)
+class Bucket:
+    """One range of a whole-number distribution's values, both ends inclusive; no `max` means open-ended."""
+
+    id: str
+    label: str
+    min: int
+    max: int | None = None
+
+    def predicate(self, column: str = "metric_value") -> str:
+        upper = f" AND {column} <= {self.max}" if self.max is not None else ""
+        return f"({column} >= {self.min}{upper})"
+
+    def payload(self) -> dict[str, Any]:
+        return {"id": self.id, "label": self.label, "min": self.min, "max": self.max}
+
+
+def _contiguous(buckets: tuple[Bucket, ...]) -> tuple[Bucket, ...]:
+    """Buckets that cover every whole value from the first minimum upward, once each, ending open."""
+    for before, after in zip(buckets, buckets[1:]):
+        if before.max is None or after.min != before.max + 1:
+            raise ValueError(f"bucket {after.id!r} does not follow {before.id!r}")
+    if buckets and buckets[-1].max is not None:
+        raise ValueError("the last bucket must be open-ended")
+    return buckets
+
+
+# Age since submission in whole days, as of the analytical date (decision-log entry 57). Day by day through
+# the first half-week, where most of the export's queue sits, then the rest of the week, the second week,
+# the rest of the month and anything older; fixed edges, so a later as-of date moves Tickets between
+# buckets rather than redrawing them.
+AGE_BUCKETS = _contiguous((
+    Bucket("0", "0 days", 0, 0),
+    Bucket("1", "1 day", 1, 1),
+    Bucket("2", "2 days", 2, 2),
+    Bucket("3", "3 days", 3, 3),
+    Bucket("4-6", "4–6 days", 4, 6),
+    Bucket("7-13", "7–13 days", 7, 13),
+    Bucket("14-29", "14–29 days", 14, 29),
+    Bucket("30-or-more", "30 days or more", 30),
+))
+
+
+@dataclass(frozen=True)
 class Metric:
     id: str
     label: str
@@ -90,6 +133,8 @@ class Metric:
     partials: tuple[Partial, ...] = ()
     share_of: str | None = None
     requires_columns: tuple[str, ...] = ()
+    # Value ranges a distribution can be counted by; each bucket's Tickets are listed by bucket_rows.
+    buckets: tuple[Bucket, ...] = ()
 
     @property
     def statistic(self) -> str:
@@ -124,6 +169,7 @@ class Metric:
             "lineage": self.lineage,
             "percentage_of": self.share_of,
             "requires_columns": list(self.requires_columns),
+            "buckets": [bucket.payload() for bucket in self.buckets],
             "availability": self.availability(fields),
         }
 
@@ -152,6 +198,7 @@ def _age_metric(metric_id: str, label: str, population: str, scope: str) -> Metr
             Exclusion("created_unusable", "t.created IS NULL", "Created is missing or not a date"),
             Exclusion("created_after_as_of", "CAST(t.created AS DATE) > $as_of", "Created falls after the as-of date"),
         ),
+        buckets=AGE_BUCKETS,
     )
 
 
@@ -389,10 +436,11 @@ METRICS: dict[str, Metric] = {metric.id: metric for metric in REGISTRY}
 class MetricError(ValueError):
     """A metric request outside the registry's allowlist."""
 
-    def __init__(self, code: str, field_name: str, message: str) -> None:
+    def __init__(self, code: str, field_name: str, message: str, status: int = 422) -> None:
         super().__init__(message)
         self.code = code
         self.field = field_name
+        self.status = status
 
     def payload(self) -> dict[str, str]:
         return {"code": self.code, "field": self.field, "message": str(self)}
@@ -436,6 +484,7 @@ def evaluate(
         "summary": None,
         "percentage": None,
         "groups": None,
+        "buckets": None,
         "coverage": None,
         "warnings": [],
     }
@@ -454,6 +503,8 @@ def evaluate(
     result["summary"] = total.get("summary")
     if group_by is not None:
         result["groups"] = _aggregate(connection, metric, scoped_sql, parameters, grouped=True)
+    if metric.buckets:
+        result["buckets"] = _bucket_counts(connection, metric, scoped_sql, parameters)
     result["coverage"] = _coverage(connection, metric, scoped_sql, parameters, total["contributing_tickets"])
     result["warnings"] = _coverage_warnings(metric, result["coverage"])
     if metric.share_of is not None:
@@ -470,6 +521,76 @@ def evaluate(
         ).fetchall()
         result["contributing_rows"] = [row[0] for row in rows]
     return result
+
+
+def bucket_rows(
+    connection: duckdb.DuckDBPyConnection,
+    fingerprint: str,
+    fields: tuple[str, ...] | list[str],
+    metric: Metric,
+    filters: Filters,
+    as_of: dt.date,
+    bucket_id: str,
+) -> dict[str, Any]:
+    """The Tickets one bucket of a metric counts, with each Ticket's value: highest value first, then earliest Created.
+
+    The same scoped rows as `evaluate`, under the same filters and as-of
+    date, so the listing always holds the bucket's count.
+    """
+    if not metric.buckets:
+        raise MetricError("no_buckets", "metric_id", f"{metric.id} is not counted by buckets", status=404)
+    bucket = next((bucket for bucket in metric.buckets if bucket.id == bucket_id), None)
+    if bucket is None:
+        raise MetricError(
+            "unknown_bucket", "bucket_id",
+            f"{metric.id} has no bucket {bucket_id!r}; buckets: {', '.join(item.id for item in metric.buckets)}",
+            status=404,
+        )
+    availability = metric.availability(fields)
+    rows: list[tuple[Any, ...]] = []
+    if availability["status"] == "available":
+        scoped_sql, parameters = _scoped(metric, fingerprint, filters, as_of, None)
+        rows = connection.execute(
+            f"""{scoped_sql} SELECT s.excel_row, t.ticket_number, t.employee_name, t.work_date, t.created,
+                t.status, t.keyed, s.metric_value
+            FROM scoped s JOIN ticket_values t ON t.snapshot_fingerprint = $fingerprint AND t.excel_row = s.excel_row
+            WHERE s.excluded_by IS NULL AND {bucket.predicate("s.metric_value")}
+            ORDER BY s.metric_value DESC, t.created NULLS LAST, s.excel_row""",
+            parameters,
+        ).fetchall()
+    return {
+        "metric": {"id": metric.id, "label": metric.label, "definition": metric.definition, "unit": metric.unit},
+        "availability": availability,
+        "bucket": bucket.payload(),
+        "grain": metric.grain,
+        "filters": filters.payload(),
+        "tickets": len(rows),
+        "rows": [
+            {
+                "excel_row": excel_row,
+                "ticket_number": ticket_number,
+                "employee": employee,
+                "date": work_date.date().isoformat() if work_date is not None else None,
+                "created": created.isoformat() if created is not None else None,
+                "status": status,
+                "keyed": keyed,
+                "value": _number(value),
+            }
+            for excel_row, ticket_number, employee, work_date, created, status, keyed, value in rows
+        ],
+    }
+
+
+def _bucket_counts(
+    connection: duckdb.DuckDBPyConnection, metric: Metric, scoped_sql: str, parameters: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Contributing Tickets per bucket, every bucket listed in order and an empty one as zero."""
+    case = " ".join(f"WHEN {bucket.predicate()} THEN '{bucket.id}'" for bucket in metric.buckets)
+    counted = dict(connection.execute(
+        f"{scoped_sql} SELECT CASE {case} END AS bucket, count(*) FROM scoped WHERE excluded_by IS NULL GROUP BY bucket",
+        parameters,
+    ).fetchall())
+    return [{**bucket.payload(), "tickets": counted.get(bucket.id, 0)} for bucket in metric.buckets]
 
 
 def _unflagged_exact_repeats(

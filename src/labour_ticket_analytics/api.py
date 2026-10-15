@@ -13,10 +13,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
-from labour_ticket_analytics import flagged
+from labour_ticket_analytics import flagged, processing_queue
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
-from labour_ticket_analytics.metrics import METRICS, MetricError, registry_payload
+from labour_ticket_analytics.metrics import METRICS, Metric, MetricError, registry_payload
 from labour_ticket_analytics.normalized import normalize_label
 from labour_ticket_analytics.review import (
     ALIAS_DECISION_VALUES, ReviewError, ReviewStore, outcome_label, pair_key, proposing_rows,
@@ -196,17 +196,24 @@ def create_app(state: AppState) -> FastAPI:
         except FilterError as error:
             raise HTTPException(status_code=422, detail=error.payload()) from error
 
-    def evaluate(fingerprint: str, metric_id: str, filters: Filters, **options) -> dict:
+    def registry_metric(metric_id: str) -> Metric:
         metric = METRICS.get(metric_id)
         if metric is None:
             raise HTTPException(
                 status_code=404,
                 detail={"code": "unknown_metric", "field": "metric_id", "message": f"no metric {metric_id!r} in the registry"},
             )
+        return metric
+
+    def evaluate(fingerprint: str, metric_id: str, filters: Filters, **options) -> dict:
+        metric = registry_metric(metric_id)
         try:
             return state.store.evaluate_metric(fingerprint, metric, filters, state.as_of, **options)
         except MetricError as error:
-            raise HTTPException(status_code=422, detail=error.payload()) from error
+            raise metric_failure(error) from error
+
+    def metric_failure(error: MetricError) -> HTTPException:
+        return HTTPException(status_code=error.status, detail=error.payload())
 
     def saved_outcome(saved: dict, excel_rows: list[int]) -> dict:
         """A pair's saved Review Outcome label, Not reviewed when none was saved."""
@@ -297,6 +304,35 @@ def create_app(state: AppState) -> FastAPI:
         fingerprint = state.active_fingerprint
         filters = active_filters(fingerprint, query)
         return {**evaluate(fingerprint, metric_id, filters, group_by=group_by, include_rows=rows), **context(fingerprint)}
+
+    @app.get("/api/metrics/{metric_id}/buckets/{bucket_id}")
+    def metric_bucket(metric_id: str, bucket_id: str, query: dict = Depends(filter_query)) -> dict:
+        """The Tickets one bucket of a metric counts, under the same filters and as-of date as its chart."""
+        fingerprint = state.active_fingerprint
+        metric = registry_metric(metric_id)
+        filters = active_filters(fingerprint, query)
+        try:
+            listed = state.store.metric_bucket_rows(fingerprint, metric, filters, state.as_of, bucket_id)
+        except MetricError as error:
+            raise metric_failure(error) from error
+        return {**listed, **context(fingerprint)}
+
+    @app.get("/api/overview/processing-queue")
+    def processing_queue_view(query: dict = Depends(filter_query)) -> dict:
+        """The two age-since-submission charts, each a registry metric counted by its buckets."""
+        fingerprint = state.active_fingerprint
+        filters = active_filters(fingerprint, query)
+        return {
+            "charts": [
+                processing_queue.chart(queue, METRICS[queue.metric_id], evaluate(fingerprint, queue.metric_id, filters))
+                for queue in processing_queue.QUEUES
+            ],
+            "caption": processing_queue.CAPTION,
+            "note": processing_queue.NOTE,
+            "grain": "Ticket",
+            "filters": filters.payload(),
+            **context(fingerprint),
+        }
 
     @app.get("/api/review-priorities")
     def review_priorities(query: dict = Depends(filter_query)) -> dict:
