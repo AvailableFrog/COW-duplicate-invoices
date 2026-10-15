@@ -5,13 +5,13 @@
 // pending-by-supervisor chart). This file adds the second task (F and H are
 // separate), an accessibility audit of every main state, and each of the six
 // explanatory states with the next action it gives.
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import AxeBuilder from "@axe-core/playwright";
 import type { Locator, Page } from "@playwright/test";
 
-import { boot, expect, tabTo, test, writeWorkbook } from "./app";
+import { REPO_ROOT, boot, expect, tabTo, test, writeWorkbook } from "./app";
 
 const PETER = "Possible duplicate L225526+L225761";
 const F = "Possible duplicate L224030+L224175";
@@ -307,4 +307,41 @@ test("failed query: a plan the service cannot run says so and how to try again",
   const explore = await startExplore(page);
   const alert = explore.getByRole("alert").filter({ hasText: "The plan could not be run" });
   await expect(alert).toContainText("Change a chip to try again, or reload the page.");
+});
+
+// Measured timings, recorded and printed, never asserted (PRD section 12: first load under 10 s, ordinary responses under 1 s).
+
+test("measured: first load, a filter change, opening a drawer and drawing an Explore chart in the browser", async ({ page, app }) => {
+  const seconds = (started: number) => Math.round((performance.now() - started) / 10) / 100;
+  const timings: Record<string, number> = {};
+
+  let started = performance.now();
+  await page.goto(app.baseURL);
+  await expect(page.getByRole("button", { name: PETER })).toBeVisible();
+  await expect(page.locator('[role="graphics-document"]').first()).toBeVisible();
+  timings["first load: page open to a usable Overview"] = seconds(started);
+
+  started = performance.now();
+  await page.getByRole("form", { name: "Filters" }).getByRole("combobox", { name: "Status" }).selectOption("Pending");
+  // Peter Holder's tickets are both Approved, so his possible duplicate leaves the list once the filter applies.
+  await expect(page.getByRole("button", { name: PETER })).toHaveCount(0);
+  timings["filter change: Status Pending applied to the Overview"] = seconds(started);
+  await page.getByRole("form", { name: "Filters" }).getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByRole("button", { name: PETER })).toBeVisible();
+
+  started = performance.now();
+  await page.getByRole("button", { name: PETER }).click();
+  await expect(page.getByRole("dialog", { name: PETER }).getByRole("table", { name: "Source fields down the side, one column per ticket" })).toBeVisible();
+  timings["drilldown: evidence drawer for C"] = seconds(started);
+  await page.keyboard.press("Escape");
+
+  started = performance.now();
+  const explore = await startExplore(page);
+  await expect(explore.locator('[role="graphics-document"]')).toHaveCount(1);
+  timings["Explore: first chart drawn"] = seconds(started);
+
+  mkdirSync(join(REPO_ROOT, "test-logs"), { recursive: true });
+  writeFileSync(join(REPO_ROOT, "test-logs", "e2e-timings.json"), `${JSON.stringify(timings, null, 2)}\n`);
+  for (const [label, value] of Object.entries(timings)) console.log(`${label}: ${value}s`);
+  expect(Object.keys(timings)).toHaveLength(4);
 });

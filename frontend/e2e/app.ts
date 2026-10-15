@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -12,6 +12,13 @@ export const COMMITTED_WORKBOOK = join(REPO_ROOT, "data", "Labour Tickets Export
 // The project environment that `uv sync` creates; LTA_PYTHON overrides it.
 const PYTHON = process.env.LTA_PYTHON ?? join(REPO_ROOT, ".venv", "bin", "python");
 const LISTENING_PREFIX = "Listening on ";
+// Everything the booted services print, checked in CI for source data by tests/log_check.py.
+export const SERVICE_LOG = join(REPO_ROOT, "test-logs", "e2e-service.log");
+
+function record(text: string): void {
+  mkdirSync(dirname(SERVICE_LOG), { recursive: true });
+  appendFileSync(SERVICE_LOG, text.endsWith("\n") ? text : `${text}\n`);
+}
 
 export interface RunningApp {
   baseURL: string;
@@ -27,11 +34,15 @@ export async function boot(workbook: string): Promise<RunningApp> {
     stdio: ["ignore", "pipe", "pipe"],
   });
   const output: string[] = [];
-  child.stderr.on("data", (chunk: Buffer) => output.push(chunk.toString()));
+  child.stderr.on("data", (chunk: Buffer) => {
+    output.push(chunk.toString());
+    record(chunk.toString());
+  });
   const baseURL = await new Promise<string>((resolve, reject) => {
     const lines = createInterface({ input: child.stdout });
     lines.on("line", (line) => {
       output.push(line);
+      record(line);
       if (line.startsWith(LISTENING_PREFIX)) resolve(line.slice(LISTENING_PREFIX.length).trim());
     });
     child.on("exit", (code) => reject(new Error(`application exited (${code}) before listening:\n${output.join("\n")}`)));

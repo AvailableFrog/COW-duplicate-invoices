@@ -15,3 +15,6 @@ dist/
 .scratch/
 frontend/test-results/
 frontend/playwright-report/
+
+# Service output captured by the test runs and checked for source data (tests/log_check.py).
+test-logs/
