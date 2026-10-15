@@ -39,6 +39,7 @@ async function openOverview(page: Page, baseURL: string): Promise<void> {
   await expect(page.getByRole("button", { name: PETER })).toBeVisible();
   // The release 1.1 panels load on their own; wait for them so every check covers them too.
   await expect(page.getByRole("region", { name: CLAIMED_HOURS }).locator('[role="graphics-document"]')).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Submission and review timing" }).locator('[role="graphics-document"]')).toHaveCount(3);
 }
 
 async function startExplore(page: Page): Promise<ReturnType<Page["getByRole"]>> {
