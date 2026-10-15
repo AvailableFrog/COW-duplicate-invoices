@@ -102,17 +102,22 @@ def test_the_reason_and_every_candidate_edge_show_its_rule_fields_compared_and_e
     assert peter["exact_repeat_not_flagged"] is True
 
 
-def test_the_timeline_lists_members_by_created_with_date_created_modified_date_approved_and_supervisor(app):
+def test_the_timeline_lists_members_by_created_with_their_dates_status_supervisor_and_claim(app):
     timeline = evidence(app, 620)["timeline"]
 
-    assert timeline["fields"] == ["Date", "Created", "Modified", "Date Approved", "Supervisor"]
+    # Ticket #11 adds the status and the four claim components, so a chronology such as M's reads down the table.
+    assert timeline["fields"] == [
+        "Date", "Created", "Approval Status", "Regular Hours", "Overtime", "Double Time", "Job Work Pay",
+        "Date Approved", "Modified", "Supervisor",
+    ]
     # Report: 855 was created 28 Sep 18:21, four days before 620 on 2 Oct 18:56.
+    claim = ["Approved", 8, 0, 0, 0]
     assert [
         (entry["excel_row"], entry["ticket_number"], [cell["value"] for cell in entry["cells"]])
         for entry in timeline["entries"]
     ] == [
-        (855, "L225526", ["2026-09-28T00:00:00", "2026-09-28T18:21:00", "2026-10-01T13:44:00", "2026-09-29T09:36:00", "Jamar O'Neal"]),
-        (620, "L225761", ["2026-09-28T00:00:00", "2026-10-02T18:56:00", "2026-10-05T07:48:00", "2026-10-05T07:42:00", "Jamar O'Neal"]),
+        (855, "L225526", ["2026-09-28T00:00:00", "2026-09-28T18:21:00", *claim, "2026-09-29T09:36:00", "2026-10-01T13:44:00", "Jamar O'Neal"]),
+        (620, "L225761", ["2026-09-28T00:00:00", "2026-10-02T18:56:00", *claim, "2026-10-05T07:42:00", "2026-10-05T07:48:00", "Jamar O'Neal"]),
     ]
 
 

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   changeAsOf,
   fetchFilterOptions,
+  fetchFlaggedDuplicates,
   fetchHeader,
   fetchReviewPriorities,
   fetchTiles,
@@ -10,6 +11,7 @@ import {
   reimportWorkbook,
   type FilterOptions,
   type FilterState,
+  type FlaggedDuplicatesResponse,
   type HeaderResponse,
   type ReviewPrioritiesResponse,
   type TilesResponse,
@@ -17,6 +19,7 @@ import {
 import { CompareTickets, type OpenPair } from "./CompareTickets";
 import { EvidenceDrawer, type DrawerTarget } from "./EvidenceDrawer";
 import { ActiveFilters, FilterBar } from "./FilterBar";
+import { FlaggedDuplicates, type OpenFlagged } from "./FlaggedDuplicates";
 import { HeaderTiles } from "./HeaderTiles";
 import { ReviewPriorities, type OpenEvidence } from "./ReviewPriorities";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
@@ -39,9 +42,12 @@ export function App() {
   const [tilesError, setTilesError] = useState("");
   const [priorities, setPriorities] = useState<ReviewPrioritiesResponse | null>(null);
   const [prioritiesError, setPrioritiesError] = useState("");
+  const [flagged, setFlagged] = useState<FlaggedDuplicatesResponse | null>(null);
+  const [flaggedError, setFlaggedError] = useState("");
   // Bumped whenever the Snapshot or as-of date changes, so every view refetches its numbers.
   const [generation, setGeneration] = useState(0);
-  // Bumped after a review save so the ranked list shows the outcomes; review never changes the other numbers.
+  // Bumped after a review save so the ranked list shows the outcomes and the tiers a settled counterpart moves;
+  // review never changes the other numbers.
   const [reviewGeneration, setReviewGeneration] = useState(0);
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
   const drawerOpener = useRef<HTMLElement | null>(null);
@@ -56,6 +62,27 @@ export function App() {
       excelRow: item.members[0].excel_row,
       displayId: item.display_id,
     });
+  };
+
+  const openFlagged: OpenFlagged = (item, opener) => {
+    if (!flagged) return;
+    drawerOpener.current = opener;
+    // Its possible duplicate when a rule links it, addressed by the flagged Ticket itself; otherwise the Ticket alone.
+    setDrawer(
+      item.possible_duplicate
+        ? {
+            kind: "possible_duplicate",
+            fingerprint: flagged.snapshot_fingerprint,
+            excelRow: item.excel_row,
+            displayId: item.possible_duplicate.display_id,
+          }
+        : {
+            kind: "ticket",
+            fingerprint: flagged.snapshot_fingerprint,
+            excelRow: item.excel_row,
+            title: `Flagged duplicate ${item.ticket_number ?? `row ${item.excel_row}`}`,
+          },
+    );
   };
 
   const openPair: OpenPair = (rows, opener) => {
@@ -147,6 +174,20 @@ export function App() {
     return () => controller.abort();
   }, [filters, generation, reviewGeneration]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchFlaggedDuplicates(filters, controller.signal)
+      .then((data) => {
+        setFlagged(data);
+        setFlaggedError("");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setFlaggedError(error instanceof Error ? error.message : String(error));
+      });
+    return () => controller.abort();
+  }, [filters, generation, reviewGeneration]);
+
   return (
     <div className="app">
       <header className="masthead">
@@ -211,10 +252,17 @@ export function App() {
             ) : (
               <p className="status">Loading the review priorities…</p>
             )}
+            {flaggedError ? (
+              <p className="notice notice-error" role="alert">
+                The flagged duplicates could not be loaded: {flaggedError}. Change the filters or reload the page.
+              </p>
+            ) : flagged ? (
+              <FlaggedDuplicates data={flagged} onOpen={openFlagged} />
+            ) : (
+              <p className="status">Loading the flagged duplicates…</p>
+            )}
             {state.kind === "ready" ? <CompareTickets rowCount={state.header.snapshot.row_count} onCompare={openPair} /> : null}
-            <p className="placeholder">
-              The flagged duplicates, processing queue and data readiness views arrive with later tickets.
-            </p>
+            <p className="placeholder">The processing queue and data readiness views arrive with later tickets.</p>
           </section>
         ) : (
           <section aria-labelledby="explore-heading">

@@ -127,8 +127,9 @@ def test_the_pair_explanation_gives_the_name_space_verdict_for_h(app):
     assert h["employee_relation"] == "spacing_differs"
     assert [rule["rule_id"] for rule in h["rules"]] == [
         "strict_repeat", "time_text_variant", "name_space_variant", "work_period_conflict", "ambiguous_period_comparison",
+        "flagged_duplicate_counterpart", "repeated_component",
     ]
-    assert [rule["matched"] for rule in h["rules"]] == [False, False, True, False, False]
+    assert [rule["matched"] for rule in h["rules"]] == [False, False, True, False, False, False, False]
     assert "Employee differs" in verdict(h, "strict_repeat")["reason"]
     assert "no confirmed Alias" in verdict(h, "work_period_conflict")["reason"]
 
@@ -378,10 +379,13 @@ def test_a_review_file_from_before_aliases_keeps_its_outcomes_and_takes_alias_de
         assert decided(booted, ["ann smith", "annsmith"], "confirmed", fingerprint)["changed"] is True
 
 
-def test_only_the_work_period_conflict_accepts_a_confirmed_alias(app):
+def test_only_the_rules_worded_or_confirmed_alias_accept_one(app):
     rules = {rule["id"]: rule for rule in app.get("/api/review-priorities").json()["rules"]}
 
-    assert [rule_id for rule_id, rule in rules.items() if rule["accepts_alias"]] == ["work_period_conflict"]
+    # PRD section 5: the Work-period conflict, and from ticket #11 the Flagged-duplicate counterpart and Repeated component.
+    assert [rule_id for rule_id, rule in rules.items() if rule["accepts_alias"]] == [
+        "work_period_conflict", "flagged_duplicate_counterpart", "repeated_component",
+    ]
     assert rules["name_space_variant"]["label"] == "Name-space variant"
     assert rules["name_space_variant"]["evidence_strength"] == "moderate"
     assert rules["name_space_variant"]["pattern"] == "Same claim looks different as text"

@@ -65,6 +65,9 @@ OUTCOME_VALUES = (
 )
 OUTCOMES = {value.id: value for value in OUTCOME_VALUES}
 NOT_REVIEWED = OUTCOMES["not_reviewed"]
+# The outcomes that settle how two Tickets relate, so a flagged duplicate's counterpart on that pair is resolved.
+# Not a duplicate says the pair is not the relationship; Needs follow-up leaves it open.
+SETTLING_OUTCOMES = ("confirmed_duplicate", "replacement_ticket")
 
 # An Alias proposal's states, in display order. Proposed is the state before any decision is saved.
 ALIAS_DECISION_VALUES = (
@@ -285,6 +288,17 @@ class ReviewStore:
             for row in rows
             if wanted is None or (row[0], row[1]) in wanted
         }
+
+    def settled_pairs(self, fingerprint: str) -> set[tuple[int, int]]:
+        """The Ticket pairs (lower row first) a reviewer settled: a Confirmed duplicate or Replacement ticket outcome,
+        or a kept/replaced link between the two. Only the rules' tiers read this, never a figure."""
+        with self._lock:
+            outcomes = self.connection.execute(
+                "SELECT first_row, second_row FROM review_outcomes WHERE snapshot_fingerprint = ? AND list_contains(?, outcome)",
+                [fingerprint, list(SETTLING_OUTCOMES)],
+            ).fetchall()
+            links = [pair_key(link["replaced_row"], link["retained_row"]) for link in self._links(fingerprint)]
+        return {(first, second) for first, second in outcomes} | set(links)
 
     def save_outcome(
         self,

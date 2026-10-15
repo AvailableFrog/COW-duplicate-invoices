@@ -29,6 +29,7 @@ COLUMNS = {
     "created": "TIMESTAMP",
     "date_approved": "TIMESTAMP",
     "time_key": "VARCHAR",
+    "description_key": "VARCHAR",
     "regular_hours": "DOUBLE",
     "overtime": "DOUBLE",
     "double_time": "DOUBLE",
@@ -66,6 +67,14 @@ def time_key(cell: Cell | None) -> str | None:
     return f"{cell.raw_type}:{value}"
 
 
+def description_key(cell: Cell | None) -> str | None:
+    """Description text after trim, case-fold and whitespace collapse, as the Flagged-duplicate counterpart
+    rule compares it; None unless the cell holds nonblank text, so a number or a blank never matches."""
+    if cell is None or cell.raw_type != "str":
+        return None
+    return " ".join(cell.value.split()).casefold() or None
+
+
 def ticket_values(fingerprint: str, ticket: Ticket) -> tuple[Any, ...]:
     """One row of normalized values, in COLUMNS order."""
     cells = {cell.field: cell for cell in ticket.cells}
@@ -89,6 +98,7 @@ def ticket_values(fingerprint: str, ticket: Ticket) -> tuple[Any, ...]:
         read("Created", date_value),
         read("Date Approved", date_value),
         time_key(cells.get("Time")),
+        description_key(cells.get("Description of Job Work")),
         read("Regular Hours", number_value),
         read("Overtime", number_value),
         read("Double Time", number_value),
