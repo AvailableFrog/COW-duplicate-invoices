@@ -327,6 +327,22 @@ npm --prefix frontend run e2e             # Playwright flows in frontend/e2e aga
 ```
 
 One test is skipped until the frontend has been built.
+
+Release-one acceptance (ticket #18) lives in its own files; `docs/test-report.md` maps each PRD section 12 criterion to its named tests and records the latest measured results:
+
+| File | Checks |
+|---|---|
+| `tests/test_acceptance_source_cells.py` | all 638 source cells of the evidence report's 14 comparisons, parsed from `docs/source/labour-ticket-report-readable.md`, against the API |
+| `tests/test_acceptance_drilldowns.py` | every Overview view and starter plan drills down to exactly its displayed total under four filter states |
+| `tests/test_acceptance_criteria.py` | every test the report names for a criterion exists |
+| `tests/test_acceptance_timings.py` | first load and ordinary response times, printed and written to `test-logs/api-timings.json`, never asserted |
+| `tests/test_reference_docs.py` | `docs/metrics-and-rules.md` matches the registry and rules the service serves; regenerate with `LTA_WRITE_DOCS=1 uv run pytest tests/test_reference_docs.py` |
+| `tests/test_log_redaction.py` | the log checker and the exception-message filter work |
+| `frontend/e2e/acceptance.spec.ts` | the second usability task (F and H), an axe WCAG 2.1 AA audit, visible focus, chart alternatives and contrast, no green, the six explanatory states, and browser timings (`test-logs/e2e-timings.json`) |
+| `frontend/e2e/layout.spec.ts` | no sideways scrolling at 1440 and 1024 px; `LTA_SCREENSHOTS=1 npm --prefix frontend run e2e -- layout` rewrites `docs/screenshots` |
+
+**Logs.** The service logs only warnings, never requests, and withholds exception messages (`logredact.py`) because a message can quote a cell value.
+Every service the tests boot has its output saved under `test-logs/` (gitignored); each run ends by checking that output against every employee, supervisor and modifier name, email and identifying description in the workbook (`tests/log_check.py`), and fails on any match.
 The browser tests (`@playwright/test` 1.56.1, Chromium) boot the application themselves on an ephemeral port with `.venv/bin/python` (override with `LTA_PYTHON`), and build any synthetic workbook through `tests/synthetic.py`; they assert text, roles and keyboard focus, not pixels.
 Install the browser once with `npx --prefix frontend playwright install chromium`.
 CI (`.github/workflows/ci.yml`) builds the frontend and runs all three on every pull request and on `main`.
@@ -337,11 +353,11 @@ CI (`.github/workflows/ci.yml`) builds the frontend and runs all three on every 
 src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), normalized (Ticket values for metrics),
                                metrics (registry), filters (filter state and the field allowlist), plans (Explore query plans: validate, compile, result, drilldown, starters), chart_templates (trusted Vega-Lite bar, line, histogram and scatter templates), result_cache (Explore result cache), exports (protected CSV), providers (plan provider adapter, null provider only), timeparse (interval parser), rules (matching rules, possible duplicates, priority),
                                evidence (evidence drawer payload), description_dates (Description-date exception), data_readiness (Data readiness view), pattern_matrix (pattern matrix and pattern filter), flagged (Flagged duplicates view), processing_queue (Processing queue view), value_context (Value context panel), annotations (+ annotations.json, the evidence report's notes),
-                               versions, store (DuckDB Snapshot tables), review (local review file: outcomes, links, history), api (HTTP)
+                               versions, store (DuckDB Snapshot tables), review (local review file: outcomes, links, history), logredact (withholds exception messages from logs), api (HTTP)
 frontend/                      React + TypeScript shell built with Vite into frontend/dist (src: App, FilterBar, HeaderTiles, ReviewPriorities, PatternMatrix,
                                FlaggedDuplicates, ProcessingQueue, DataReadiness, ValueContext, CompareTickets, EvidenceDrawer, ReviewPanel, Explore; charts/ holds the trusted
                                Vega-Lite templates, the check on the service's templates and their renderer); e2e/ holds the Playwright flows
 tests/                         API tests at the booted-app seam
 data/                          the committed source workbook (private repository, ADR 0003)
-docs/                          PRD, decision log, ADRs, handoff sources
+docs/                          PRD, decision log, ADRs, handoff sources, test report, generated metric and rule reference, screenshots
 ```
