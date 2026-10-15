@@ -151,6 +151,21 @@ Measured on the environment above:
 
 `tests/test_saved_views.py` covers the save, list, rename and delete cycle, views surviving a relaunch, and reproduced numbers on the view's own Snapshot. It also covers differences reported for a changed as-of date, Alias and Snapshot, refusals of invalid names, kinds, filters, plans and cross-site requests, names kept as text, and a schema-version-2 review file upgrading with its outcomes kept. `frontend/e2e/saved-views.spec.ts` saves and reopens Overview filters and an Explore chart, opens a changed view only after "Open anyway", and renames and deletes a view.
 
+## Carrying decisions forward (release two, #40)
+
+`tests/test_carry_forward.py` reimports changed workbooks and checks the following:
+
+- Earlier outcomes and links are proposed, matched by ticket number after every row has moved, and nothing is saved until a reviewer acts.
+- An unchanged outcome carries in one step, keeping its reviewer, time and rationale, and the earlier Snapshot's review data is identical before and after.
+- A changed one lists each field before and after, and is refused without the revalidation tick and a reason.
+- A declined link is not carried and not proposed again.
+- A missing ticket, or a pair no rule links any more, can only be declined.
+- A carried Alias runs the rules again.
+- After a relaunch on the new export, the kept values are still compared, and a decision whose values were never kept cannot be compared.
+- A cross-site answer, and an unknown action, are refused.
+
+`frontend/e2e/carry-forward.spec.ts` carries an unchanged outcome in one step and a changed one after the check, with an axe audit of the panel, and finds the carried outcome in the new Snapshot's drawer. It also declines a proposal and confirms it stays answered after a reload.
+
 ## Logs
 
 The service logs only warnings and never logs requests.

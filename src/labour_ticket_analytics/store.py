@@ -773,6 +773,48 @@ class SnapshotStore:
             ).fetchall()
         return dict(rows)
 
+    def rows_by_ticket_number(self, fingerprint: str, ticket_numbers: Iterable[str]) -> dict[str, list[int]]:
+        """Every Excel row holding each ticket number, compared as written; a number in no row is left out."""
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT ticket_number, list(excel_row ORDER BY excel_row) FROM ticket_values"
+                " WHERE snapshot_fingerprint = ? AND list_contains(?, ticket_number) GROUP BY ticket_number",
+                [fingerprint, list(ticket_numbers)],
+            ).fetchall()
+        return {number: list(found) for number, found in rows}
+
+    def ticket_cells(self, fingerprint: str, excel_rows: Iterable[int]) -> dict[int, dict[str, Any]]:
+        """Each Ticket's source cells by field, as raw type and value: what a carried-forward decision compares."""
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT excel_row, field, position, raw_type, value_text, value_integer, value_number,"
+                " value_boolean, value_timestamp, number_format FROM cells"
+                " WHERE snapshot_fingerprint = ? AND list_contains(?, excel_row) ORDER BY excel_row, position",
+                [fingerprint, list(excel_rows)],
+            ).fetchall()
+        found: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            cell = _cell_payload(row[1:])
+            found.setdefault(row[0], {})[cell["field"]] = {"raw_type": cell["raw_type"], "value": cell["value"]}
+        return found
+
+    def candidate_pairs(self, fingerprint: str) -> set[tuple[int, int]]:
+        """Every Ticket pair a Candidate links, lower row first."""
+        with self._lock:
+            return {
+                (min(candidate.first_row, candidate.second_row), max(candidate.first_row, candidate.second_row))
+                for candidate in self._candidates(fingerprint)
+            }
+
+    def possible_duplicate_groups(self, fingerprint: str) -> dict[int, frozenset[int]]:
+        """Each Ticket in a Possible Duplicate, mapped to all of that Possible Duplicate's member rows."""
+        groups: dict[int, frozenset[int]] = {}
+        with self._lock:
+            for component in rules.compose(self._candidates(fingerprint)):
+                rows = frozenset(row for candidate in component for row in (candidate.first_row, candidate.second_row))
+                groups.update(dict.fromkeys(rows, rows))
+        return groups
+
     def candidate_rule_ids(self, fingerprint: str, first_row: int, second_row: int) -> list[str]:
         """The rules with a Candidate linking two Tickets, in either order; empty when none does."""
         with self._lock:

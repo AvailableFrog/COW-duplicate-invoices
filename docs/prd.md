@@ -268,7 +268,7 @@ Do not force a single retained ticket when the evidence supports several legitim
 Saving or revising a decision records reviewer label, timestamp, previous value, new value, and rationale in local history.
 Require an explicit retained/excluded relationship before affecting an adjusted total; an unresolved note alone has no numerical effect.
 Decisions are snapshot-scoped by default.
-Carry-forward to a new export is release two: proposed carry-forwards will require matching ticket numbers and comparison of relevant source values, followed by explicit revalidation; never silently apply old decisions to changed records.
+Carry-forward to a new export is release two: proposed carry-forwards will require matching ticket numbers and comparison of relevant source values, followed by explicit revalidation; never silently apply old decisions to changed records. Built in ticket #40: every source value is compared, and a changed decision is carried only after a ticked revalidation and a reason (decision-log entries 107-109).
 
 ## 6. Overview design and evidence inspection
 

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
 from labour_ticket_analytics import (
-    claimed_hours, data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, timing,
+    carry_forward, claimed_hours, data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, timing,
     value_context, views,
 )
 from labour_ticket_analytics.annotations import ANNOTATIONS
@@ -113,6 +113,10 @@ class AppState:
                 raise WorkbookError(f"workbook not found: {self.workbook_path}")
             fingerprint = fingerprint_workbook(self.workbook_path)
             added = False
+            # Keep the values of every decided Ticket in the Snapshots loaded now, so a decision carried forward
+            # to this export can be compared with them even after a relaunch drops those Snapshots.
+            for loaded in self.store.snapshots():
+                carry_forward.remember_decided(self.review, self.store, loaded["fingerprint"])
             if not self.store.has_snapshot(fingerprint):
                 snapshot = import_workbook(self.workbook_path)
                 added = self.store.add_snapshot(snapshot, self.aliases(snapshot.fingerprint))
@@ -151,6 +155,20 @@ class LinkChange(BaseModel):
     rationale: str = ""
 
 
+class CarryChange(BaseModel):
+    """A reviewer's answer to one carry-forward proposal: carry it to this export or not, and why.
+
+    A proposal whose tickets changed, or cannot be compared, is carried only
+    with revalidated set and a rationale saying why the decision still holds.
+    """
+
+    id: str
+    action: str
+    reviewer: str
+    rationale: str = ""
+    revalidated: bool = False
+
+
 def filter_query(
     date_basis: str = DEFAULT_DATE_BASIS,
     date_from: dt.date | None = None,
@@ -178,6 +196,8 @@ def require_same_origin(request: Request) -> None:
 
 def create_app(state: AppState) -> FastAPI:
     app = FastAPI(title="Labour Ticket Analytics", version=__version__, docs_url=None, redoc_url=None)
+    # Decisions saved before this launch keep their Tickets' values, for carrying them to a later export.
+    carry_forward.remember_decided(state.review, state.store, state.active_fingerprint)
 
     def as_of_payload() -> dict:
         is_default = state.as_of == DEFAULT_AS_OF
@@ -1000,7 +1020,69 @@ def create_app(state: AppState) -> FastAPI:
             except ReviewError as error:
                 raise review_failure(error) from error
             rerun = state.store.rerun_rules(fingerprint, state.aliases(fingerprint)) if saved["changed"] else None
+        carry_forward.remember(state.review, state.store, fingerprint, proposing_rows(proposal))
         return {**saved, "rerun": rerun or {"added": [], "removed": []}, "rules_ran": rerun is not None, **context(fingerprint)}
+
+    @app.get("/api/snapshots/{fingerprint}/carry-forward")
+    def carry_forward_list(fingerprint: str) -> dict:
+        """Decisions saved on earlier Snapshots, proposed for this one, and what reviewers already did with them."""
+        require_snapshot(fingerprint)
+        return {**carry_forward.proposals(state.review, state.store, fingerprint), **context(fingerprint)}
+
+    @app.post("/api/snapshots/{fingerprint}/carry-forward")
+    def carry_forward_answer(fingerprint: str, change: CarryChange, request: Request) -> dict:
+        """Carry one proposal to this Snapshot, or decline it; a carried Alias runs every rule again."""
+        require_same_origin(request)
+        require_snapshot(fingerprint)
+        if change.action not in ("carry", "decline"):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "unknown_action", "field": "action", "message": "the action is carry or decline"},
+            )
+        with state.rules_lock:
+            proposal = carry_forward.find(state.review, state.store, fingerprint, change.id)
+            if proposal is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "code": "no_proposal", "field": "id",
+                        "message": "no such proposal for this export; it may have been answered or changed, so reload the list",
+                    },
+                )
+            try:
+                if change.action == "decline":
+                    state.review.decline_carry(fingerprint, proposal, reviewer=change.reviewer, rationale=change.rationale)
+                else:
+                    if proposal["status"] == carry_forward.CANNOT_CARRY:
+                        raise ReviewError("cannot_carry", "id", proposal["reason"], status=409)
+                    if proposal["needs_revalidation"]:
+                        if not change.revalidated:
+                            raise ReviewError(
+                                "revalidation_required", "revalidated",
+                                "these tickets changed or cannot be compared; check the differences and confirm the "
+                                "decision still holds",
+                            )
+                        if not change.rationale.strip():
+                            raise ReviewError(
+                                "rationale_required", "rationale", "say why the decision still holds for this export",
+                            )
+                    state.review.accept_carry(
+                        fingerprint, proposal, proposal["target"]["excel_rows"], proposal["target"]["ticket_numbers"],
+                        reviewer=change.reviewer, rationale=change.rationale, revalidated=change.revalidated,
+                    )
+            except ReviewError as error:
+                raise review_failure(error) from error
+            rerun = None
+            if change.action == "carry":
+                carry_forward.remember(state.review, state.store, fingerprint, proposal["target"]["excel_rows"])
+                if proposal["kind"] == "alias":
+                    rerun = state.store.rerun_rules(fingerprint, state.aliases(fingerprint))
+        return {
+            "answered": {"id": proposal["id"], "action": change.action},
+            "rules_ran": rerun is not None,
+            **carry_forward.proposals(state.review, state.store, fingerprint),
+            **context(fingerprint),
+        }
 
     @app.get("/api/snapshots/{fingerprint}/pairs/{first_row}/{second_row}")
     def pair_explanation(fingerprint: str, first_row: int, second_row: int, query: dict = Depends(filter_query)) -> dict:
@@ -1032,6 +1114,7 @@ def create_app(state: AppState) -> FastAPI:
             saved = state.review.save_outcome(fingerprint, *pair, numbers, **change.model_dump())
         except ReviewError as error:
             raise review_failure(error) from error
+        carry_forward.remember(state.review, state.store, fingerprint, list(pair))
         return {**saved, **context(fingerprint)}
 
     def linkable(fingerprint: str, replaced_row: int, retained_row: int) -> None:
@@ -1060,6 +1143,7 @@ def create_app(state: AppState) -> FastAPI:
             link = state.review.link(fingerprint, replaced_row, retained_row, numbers, **change.model_dump())
         except ReviewError as error:
             raise review_failure(error) from error
+        carry_forward.remember(state.review, state.store, fingerprint, [replaced_row, retained_row])
         return {**link, **context(fingerprint)}
 
     @app.delete("/api/snapshots/{fingerprint}/replacement-links/{replaced_row}/{retained_row}")

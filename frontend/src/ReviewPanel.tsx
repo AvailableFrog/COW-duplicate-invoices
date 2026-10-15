@@ -22,7 +22,7 @@ import {
 const REVIEWER_KEY = "lta.reviewer";
 
 /** The reviewer label this browser last used; storage may be unavailable, so failure means "none". */
-function rememberedReviewer(): string {
+export function rememberedReviewer(): string {
   try {
     return window.localStorage.getItem(REVIEWER_KEY) ?? "";
   } catch {
@@ -30,7 +30,7 @@ function rememberedReviewer(): string {
   }
 }
 
-function rememberReviewer(label: string): void {
+export function rememberReviewer(label: string): void {
   try {
     window.localStorage.setItem(REVIEWER_KEY, label);
   } catch {
