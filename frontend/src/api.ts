@@ -318,6 +318,41 @@ export interface EvidenceMember extends Member {
   provenance: { snapshot_fingerprint: string; sheet: string; excel_row: number; dataframe_index: number };
   issues: ImportIssue[];
   time_parse: TimeParse;
+  description_dates: DescriptionDates;
+}
+
+export type DescriptionDateUncertainty = "year_omitted" | "two_digit_year" | "day_month_order";
+
+/** One explicit date written in a description: its text span, how it reads and whether it differs from Date. */
+export interface DescriptionDateReference {
+  text: string;
+  /** Character offsets in the description text. */
+  start: number;
+  end: number;
+  kind: "date" | "range";
+  interpretation: string;
+  /** Each an inclusive span; a single date starts and ends on itself. Two when day and month order is unclear. */
+  readings: { from: string; to: string }[];
+  year_written: boolean;
+  uncertain: boolean;
+  uncertainty: DescriptionDateUncertainty[];
+  notes: string[];
+  /** Null when Date is unusable, so nothing is compared. */
+  differs_from_date: boolean | null;
+}
+
+/** The Description-date exception for one Ticket: never a Candidate, never a change to Date. */
+export interface DescriptionDates {
+  check: "description_date_exception";
+  pattern: { id: string; number: number; label: string };
+  rule_version: string;
+  status: "conflict" | "agrees" | "no_date_reference" | "blank" | "not_text" | "date_unusable" | "disabled";
+  conflict: boolean;
+  /** Whether a reference that differs from Date is uncertain. */
+  uncertain: boolean;
+  date: string | null;
+  references: DescriptionDateReference[];
+  note: string;
 }
 
 export interface StatusBreakdown {
@@ -677,6 +712,102 @@ export interface ValueContextResponse extends Provenance {
   filters: FilterPayload;
 }
 
+/** The reporting window the analyst chose; a null end follows the default (the years Created covers). */
+export interface ReportingWindowState {
+  from: string | null;
+  to: string | null;
+}
+
+export const DEFAULT_REPORTING_WINDOW: ReportingWindowState = { from: null, to: null };
+
+export interface ReportingWindow {
+  from: string;
+  to: string;
+  default_from: string | null;
+  default_to: string | null;
+  is_default: boolean;
+  dates_checked: string[];
+  description: string;
+  note: string;
+}
+
+export type ReadinessCheckId =
+  | "ambiguous_intervals"
+  | "anomalous_dates"
+  | "description_date_conflicts"
+  | "unresolved_identity"
+  | "missing_rates"
+  | "missing_required_fields";
+
+/** One readiness count: a registry metric (or, for name proposals, the Alias proposals) under the filters. */
+export interface ReadinessCheck {
+  id: ReadinessCheckId;
+  label: string;
+  /** Null for the Alias proposals, which are not a Ticket metric. */
+  metric_id: string | null;
+  unit: string;
+  grain: string;
+  description: string;
+  /** Null when a missing column disables the count. */
+  count: number | null;
+  definition: string;
+  availability: { status: "available" | "disabled"; reason: string | null };
+  summary: string | null;
+  warnings: string[];
+}
+
+export interface DataReadinessResponse extends Provenance {
+  title: string;
+  question: string;
+  note: string;
+  checks: ReadinessCheck[];
+  reporting_window: ReportingWindow | null;
+  filters: FilterPayload;
+}
+
+/** What one check found on a Ticket; only the fields of the listed check are present. */
+export interface ReadinessDetail {
+  time?: string | number | boolean | null;
+  status?: string;
+  ambiguous_periods?: { text: string; plausible_reading: (TimeInterval & { assumed: true }) | null; flags: string[] }[];
+  outside?: { field: string; value: string }[];
+  description_dates?: DescriptionDates;
+  rate?: { raw_type: string; value: string | number | boolean | null } | null;
+  claimed_hours?: number | null;
+  positive_hours?: boolean;
+  issues?: { field: string | null; code: string; message: string }[];
+}
+
+export interface ReadinessTicketRow {
+  excel_row: number;
+  ticket_number: string | null;
+  employee: string | null;
+  date: string | null;
+  created: string | null;
+  status: ApprovalStatus | null;
+  keyed: boolean | null;
+  in_filter: boolean;
+  detail: ReadinessDetail;
+}
+
+/** A proposed Alias nobody has decided, opened through the possible duplicate of its first proposing ticket. */
+export interface ReadinessAliasRow {
+  labels: [string, string];
+  names: string[];
+  decision: AliasDecisionLabel;
+  proposed_by: { excel_rows: [number, number]; ticket_numbers: (string | null)[] }[];
+  excel_row: number;
+  possible_duplicate: string | null;
+}
+
+export interface ReadinessRowsResponse extends Provenance {
+  check: ReadinessCheck;
+  count: number;
+  rows: (ReadinessTicketRow | ReadinessAliasRow)[];
+  reporting_window: ReportingWindow | null;
+  filters: FilterPayload;
+}
+
 /** A refused or failed request, with its HTTP status. */
 export class ApiError extends Error {
   constructor(
@@ -791,6 +922,35 @@ export function fetchProcessingQueue(filters: FilterState, signal?: AbortSignal)
 /** The value-context panel's BBD figures under the filters, with any analyst-reviewed alternative. */
 export function fetchValueContext(filters: FilterState, signal?: AbortSignal): Promise<ValueContextResponse> {
   return getJson<ValueContextResponse>(`/api/overview/value-context?${filterQuery(filters)}`, signal);
+}
+
+function readinessQuery(filters: FilterState, window: ReportingWindowState): string {
+  const params = new URLSearchParams(filterQuery(filters));
+  if (window.from) params.set("window_from", window.from);
+  if (window.to) params.set("window_to", window.to);
+  return params.toString();
+}
+
+/** The Data readiness counts under the filters and reporting window. */
+export function fetchDataReadiness(
+  filters: FilterState,
+  window: ReportingWindowState,
+  signal?: AbortSignal,
+): Promise<DataReadinessResponse> {
+  return getJson<DataReadinessResponse>(`/api/overview/data-readiness?${readinessQuery(filters, window)}`, signal);
+}
+
+/** Exactly the rows one readiness count counts, under the same filters and window. */
+export function fetchReadinessRows(
+  checkId: ReadinessCheckId,
+  filters: FilterState,
+  window: ReportingWindowState,
+  signal?: AbortSignal,
+): Promise<ReadinessRowsResponse> {
+  return getJson<ReadinessRowsResponse>(
+    `/api/overview/data-readiness/${encodeURIComponent(checkId)}?${readinessQuery(filters, window)}`,
+    signal,
+  );
 }
 
 /** The Tickets one bucket of a registry metric counts, under the same filters as its chart. */

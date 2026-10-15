@@ -18,8 +18,9 @@ import duckdb
 
 from labour_ticket_analytics.filters import DATE_BASES, Filters
 from labour_ticket_analytics.rules import IN_CANDIDATE_SQL, STRICT_KEY, strict_groups_sql
+from labour_ticket_analytics.schema import REQUIRED_COLUMNS
 
-REGISTRY_VERSION = "1.4.0"
+REGISTRY_VERSION = "1.5.0"
 
 # Grouping dimension ID (the source column) -> normalized column.
 DIMENSIONS = {
@@ -51,6 +52,31 @@ BASE_VALUE_SQL = (
 )
 # The Tickets an explicit kept/replaced link marks as replaced, supplied from the local review file.
 REPLACED_BY_REVIEW_SQL = "list_contains(CAST($replaced_rows AS INTEGER[]), t.excel_row)"
+
+# Data readiness (PRD section 4). A Ticket whose Time parse result holds an Ambiguous Interval, or whose
+# description names a date that differs from Date: both found once at import and kept in ticket_checks.
+AMBIGUOUS_INTERVAL_SQL = (
+    "EXISTS (SELECT 1 FROM ticket_checks k WHERE k.snapshot_fingerprint = t.snapshot_fingerprint"
+    " AND k.excel_row = t.excel_row AND k.ambiguous_interval)"
+)
+DESCRIPTION_DATE_CONFLICT_SQL = (
+    "EXISTS (SELECT 1 FROM ticket_checks k WHERE k.snapshot_fingerprint = t.snapshot_fingerprint"
+    " AND k.excel_row = t.excel_row AND k.description_date_conflict)"
+)
+# The usable dates a reporting window applies to, by normalized column: the three date bases.
+WINDOW_DATES = {"Date": "work_date", "Created": "created", "Date Approved": "date_approved"}
+OUTSIDE_WINDOW_SQL = "(" + " OR ".join(
+    f"(t.{column} IS NOT NULL AND CAST(t.{column} AS DATE) NOT BETWEEN $window_from AND $window_to)"
+    for column in WINDOW_DATES.values()
+) + ")"
+# A required cell left empty, as the import issues record it: a blank row, an empty required cell, or a
+# missing Ticket Number. An invalid value is a different issue and is not counted here.
+MISSING_REQUIRED_FIELD_SQL = (
+    "EXISTS (SELECT 1 FROM import_issues i WHERE i.snapshot_fingerprint = t.snapshot_fingerprint"
+    " AND i.excel_row = t.excel_row AND (i.code = 'blank_row' OR (i.code IN ('missing_value', 'missing_business_id')"
+    f" AND i.field IN ({', '.join(repr(name) for name in REQUIRED_COLUMNS)}))))"
+)
+MISSING_RATE_SCOPE = "t.rate IS NULL"
 
 Aggregation = Literal[
     "count", "count_distinct", "sum", "distribution", "possible_duplicate_count", "hypothetical_extra_claims",
@@ -149,6 +175,9 @@ class Metric:
     # Whether the value depends on the local review file's kept/replaced links ($replaced_rows), not only
     # on the Snapshot. Only such a metric is an analyst-reviewed figure.
     reads_review_links: bool = False
+    # Whether the value depends on the reporting window ($window_from, $window_to), a visible, configurable
+    # date range that defaults to the years Created covers.
+    reads_reporting_window: bool = False
 
     @property
     def statistic(self) -> str:
@@ -185,6 +214,7 @@ class Metric:
             "requires_columns": list(self.requires_columns),
             "buckets": [bucket.payload() for bucket in self.buckets],
             "reads_review_links": self.reads_review_links,
+            "reads_reporting_window": self.reads_reporting_window,
             "availability": self.availability(fields),
         }
 
@@ -507,6 +537,102 @@ REGISTRY: tuple[Metric, ...] = (
         exclusions_text=("Tickets an explicit kept/replaced link marks as replaced; a Review Outcome or note alone never does",),
         reads_review_links=True,
     ),
+    # Data readiness (decision-log entries 69-70): which records cannot be reliably compared or valued.
+    Metric(
+        id="ambiguous_interval_ticket_count",
+        label="Ambiguous times",
+        definition=(
+            "Tickets whose Time parse result holds at least one Ambiguous Interval: a work period with no AM/PM on "
+            "one end or both. Its Plausible Reading is shown, labelled assumed, but it can never prove overlap or "
+            "separation."
+        ),
+        unit="tickets",
+        grain="Ticket",
+        aggregation="count",
+        null_treatment="A Time cell that is blank, zero, a number or unreadable holds no period, so it is not counted here.",
+        exclusions_text=("Tickets whose every period is a Confident Interval, or whose Time holds no period",),
+        lineage="Each Ticket's Time cell as the interval parser read it at import (parser version).",
+        scope=AMBIGUOUS_INTERVAL_SQL,
+        value="1",
+        share_of="ticket_count",
+    ),
+    Metric(
+        id="anomalous_date_count",
+        label="Dates outside the reporting window",
+        definition=(
+            "Tickets with a Date as recorded, Created or Date Approved outside the reporting window, both ends "
+            "inclusive. The window is visible and configurable and defaults to the years Created covers. Such dates "
+            "are shown as recorded and never corrected, and no year is reassigned."
+        ),
+        unit="tickets",
+        grain="Ticket",
+        aggregation="count",
+        null_treatment="A missing or invalid date is an import issue, never an anomalous date.",
+        exclusions_text=("Tickets whose usable dates all fall inside the window",),
+        lineage="Each Ticket's Date, Created and Date Approved cells and the reporting window.",
+        measured_on="Date as recorded, Created and Date Approved against the reporting window",
+        scope=OUTSIDE_WINDOW_SQL,
+        value="1",
+        share_of="ticket_count",
+        reads_reporting_window=True,
+    ),
+    Metric(
+        id="description_date_conflict_count",
+        label="Date conflicts in descriptions",
+        definition=(
+            "Tickets whose Description of Job Work names an explicit date that differs from Date as recorded "
+            "(the Description-date exception, pattern 6). Date is kept as recorded; the description never "
+            "changes it, and the exception never links two tickets."
+        ),
+        unit="tickets",
+        grain="Ticket",
+        aggregation="count",
+        null_treatment=(
+            "A description with no explicit date, a blank or non-text description, or an unusable Date is not "
+            "counted; a reference with no year written is compared in the year of Date and flagged uncertain."
+        ),
+        exclusions_text=("Tickets whose description names no date, or only dates that agree with Date",),
+        lineage="Each Ticket's Description of Job Work and Date cells, read at import (rules version).",
+        scope=DESCRIPTION_DATE_CONFLICT_SQL,
+        value="1",
+        share_of="ticket_count",
+        requires_columns=("Description of Job Work",),
+    ),
+    Metric(
+        id="missing_rate_count",
+        label="Missing rates",
+        definition=(
+            "Tickets with no usable Rate: the Rate cell is blank or not a number. Their claimed labour cannot be "
+            "priced and is never valued at zero or given another ticket's Rate."
+        ),
+        unit="tickets",
+        grain="Ticket",
+        aggregation="count",
+        null_treatment="Every Ticket without a usable Rate counts, whatever its hours.",
+        exclusions_text=("Tickets with a numeric Rate",),
+        lineage="Each Ticket's Rate cell.",
+        scope=MISSING_RATE_SCOPE,
+        value="1",
+        share_of="ticket_count",
+        requires_columns=("Rate",),
+    ),
+    Metric(
+        id="missing_required_field_count",
+        label="Missing required fields",
+        definition=(
+            "Tickets with an empty required cell, as the import issues record it: a blank row, an empty required "
+            "cell or a missing Ticket Number. The Ticket stays in the Snapshot and nothing is filled in."
+        ),
+        unit="tickets",
+        grain="Ticket",
+        aggregation="count",
+        null_treatment="A required cell holding an invalid value is a different import issue and is not counted here.",
+        exclusions_text=("Tickets whose required cells all hold a value",),
+        lineage="The import issues of each Ticket (blank_row, missing_value, missing_business_id on a required column).",
+        scope=MISSING_REQUIRED_FIELD_SQL,
+        value="1",
+        share_of="ticket_count",
+    ),
 )
 
 METRICS: dict[str, Metric] = {metric.id: metric for metric in REGISTRY}
@@ -539,11 +665,14 @@ def evaluate(
     group_by: str | None = None,
     include_rows: bool = False,
     replaced_rows: list[int] | tuple[int, ...] = (),
+    window: tuple[dt.date, dt.date] | None = None,
 ) -> dict[str, Any]:
     """One metric's value under the filters, with its coverage, warnings and (optionally) source rows.
 
     `replaced_rows` are the Tickets the local review file's kept/replaced links
     mark as replaced; only a metric that `reads_review_links` uses them.
+    `window` is the reporting window, read only by a metric that
+    `reads_reporting_window`; without one such a metric has no value.
     """
     if group_by is not None:
         if group_by not in metric.allowed_dimensions:
@@ -554,6 +683,11 @@ def evaluate(
         if group_by not in fields:
             raise MetricError("unsupported_dimension", "group_by", f"the workbook has no {group_by} column to group by")
     availability = metric.availability(fields)
+    if availability["status"] == "available" and metric.reads_reporting_window and window is None:
+        availability = {
+            "status": "disabled",
+            "reason": "No Created date is usable, so there is no default reporting window; choose one.",
+        }
     result: dict[str, Any] = {
         "metric": {
             "id": metric.id, "label": metric.label, "definition": metric.definition,
@@ -583,7 +717,7 @@ def evaluate(
         result.update(_extra_claims(connection, fingerprint, filters, include_rows))
         return result
 
-    scoped_sql, parameters = _scoped(metric, fingerprint, filters, as_of, group_by, replaced_rows)
+    scoped_sql, parameters = _scoped(metric, fingerprint, filters, as_of, group_by, replaced_rows, window)
     totals = _aggregate(connection, metric, scoped_sql, parameters, grouped=False)
     total = totals[0] if totals else _empty_aggregate(metric)
     result["value"] = total["value"]
@@ -828,6 +962,7 @@ def _scoped(
     as_of: dt.date,
     group_by: str | None,
     replaced_rows: list[int] | tuple[int, ...] = (),
+    window: tuple[dt.date, dt.date] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """A WITH clause defining `scoped`: one row per in-scope Ticket with its value and any exclusion."""
     filter_sql, parameters = filters.sql("t")
@@ -836,6 +971,8 @@ def _scoped(
         parameters["as_of"] = as_of
     if metric.reads_review_links:
         parameters["replaced_rows"] = list(replaced_rows)
+    if metric.reads_reporting_window and window is not None:
+        parameters["window_from"], parameters["window_to"] = window
     excluded = " ".join(f"WHEN {item.predicate} THEN '{item.code}'" for item in metric.exclusions)
     partial = " ".join(f"WHEN {item.predicate} THEN '{item.code}'" for item in metric.partials)
     quantity = " ".join(
