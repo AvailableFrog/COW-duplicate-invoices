@@ -2001,3 +2001,54 @@ input[type="date"]:focus-within {
   }
 }
 
+
+/* Saved views (ticket #39). */
+.saved-views {
+  margin: 8px 0 0;
+}
+
+.saved-views summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.save-view {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  margin: 10px 0;
+}
+
+.save-view label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.save-view input {
+  font: inherit;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.save-view input:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.view-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.view-list > li {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}

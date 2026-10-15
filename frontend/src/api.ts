@@ -1404,6 +1404,65 @@ export function inheritedFilters(filters: FilterState) {
   };
 }
 
+/** The filter bar's state from the wire form a plan or saved view carries (one job and one status at most). */
+export function filtersFromWire(wire: ReturnType<typeof inheritedFilters>): FilterState {
+  return {
+    dateBasis: wire.date_basis,
+    dateFrom: wire.date_from,
+    dateTo: wire.date_to,
+    job: wire.jobs[0] ?? null,
+    status: (wire.statuses[0] as ApprovalStatus | undefined) ?? null,
+  };
+}
+
+// Saved views (ticket #39)
+
+export type SavedViewState =
+  | { filters: ReturnType<typeof inheritedFilters> }
+  | { plan: Plan; inherited: ReturnType<typeof inheritedFilters> | null };
+
+export interface SavedView {
+  id: number;
+  name: string;
+  kind: "overview" | "explore";
+  state: SavedViewState;
+  saved_under: { snapshot_fingerprint: string; as_of: string; versions: Record<string, string>; aliases: string[][] };
+  created_at: string;
+  updated_at: string;
+  current: boolean;
+  differences: { field: string; saved: unknown; now: unknown; message: string }[];
+}
+
+async function viewRequest(path: string, method: string, body?: unknown): Promise<SavedView | null> {
+  const response = await fetch(path, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const detail = ((await response.json().catch(() => ({}))) as { detail?: { message?: string } | string }).detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.message ?? `${response.status} ${response.statusText}`);
+  }
+  const payload = (await response.json()) as { view?: SavedView };
+  return payload.view ?? null;
+}
+
+export async function fetchViews(signal?: AbortSignal): Promise<SavedView[]> {
+  return (await getJson<{ views: SavedView[] }>("/api/views", signal)).views;
+}
+
+export async function saveView(name: string, kind: SavedView["kind"], state: SavedViewState): Promise<SavedView> {
+  return (await viewRequest("/api/views", "POST", { name, kind, state })) as SavedView;
+}
+
+export async function renameView(id: number, name: string): Promise<SavedView> {
+  return (await viewRequest(`/api/views/${id}`, "PUT", { name })) as SavedView;
+}
+
+export async function deleteView(id: number): Promise<void> {
+  await viewRequest(`/api/views/${id}`, "DELETE");
+}
+
 /** What every plan request sends: the plan, the inherited filters beside it and the Snapshot it is shown for. */
 export interface PlanRequest {
   plan: Plan;

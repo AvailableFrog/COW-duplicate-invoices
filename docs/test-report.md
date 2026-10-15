@@ -147,6 +147,10 @@ Measured on the environment above:
 
 `frontend/e2e/phone.spec.ts` runs the three usability tasks at 390 by 844 CSS pixels with touch: investigating C, opening F and H as separate possible duplicates, and building then regrouping the pending-by-supervisor chart. The layout checks run at 390 px too. Two fixes made them pass. The review panel's fields stack in one column and shrink to it, where they had pushed the drawer to 609 px. And the drawer takes the whole screen below 600 px.
 
+## Saved views (release two, #39)
+
+`tests/test_saved_views.py` covers the save, list, rename and delete cycle, views surviving a relaunch, and reproduced numbers on the view's own Snapshot. It also covers differences reported for a changed as-of date, Alias and Snapshot, refusals of invalid names, kinds, filters, plans and cross-site requests, names kept as text, and a schema-version-2 review file upgrading with its outcomes kept. `frontend/e2e/saved-views.spec.ts` saves and reopens Overview filters and an Explore chart, opens a changed view only after "Open anyway", and renames and deletes a view.
+
 ## Logs
 
 The service logs only warnings and never logs requests.
