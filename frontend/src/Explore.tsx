@@ -668,6 +668,8 @@ interface ResultViewProps {
   request: PlanRequest;
   onRerun: () => void;
   onOpenTicket: ExploreProps["onOpenTicket"];
+  /** Prefix for the element ids, so a result can also be shown on the Overview without repeating them. */
+  idPrefix?: string;
 }
 
 /** A figure in the metric's unit, as the total line and drilldown read it. */
@@ -684,7 +686,15 @@ function rangeText(result: PlanResult): string | null {
   return `Fixed range: ${span}`;
 }
 
-function ResultView({ result, staleReason, catalogue, request, onRerun, onOpenTicket }: ResultViewProps) {
+export function ResultView({
+  result,
+  staleReason,
+  catalogue,
+  request,
+  onRerun,
+  onOpenTicket,
+  idPrefix = "explore",
+}: ResultViewProps) {
   const form = result.result.form;
   const dimension = result.plan.group_by[0] ?? null;
   const nouns =
@@ -725,7 +735,7 @@ function ResultView({ result, staleReason, catalogue, request, onRerun, onOpenTi
 
   return (
     <>
-      <h3 id="explore-result-heading">{result.title}</h3>
+      <h3 id={`${idPrefix}-result-heading`}>{result.title}</h3>
       <p className="explore-summary">{result.summary}</p>
       <p className="active-filters explore-context">
         <span className="muted">Showing </span>
@@ -806,7 +816,13 @@ function ResultView({ result, staleReason, catalogue, request, onRerun, onOpenTi
         </>
       )}
       {drill !== undefined && !staleReason ? (
-        <DrilldownPanel request={request} group={drill} onClose={() => setDrill(undefined)} onOpenTicket={onOpenTicket} />
+        <DrilldownPanel
+          request={request}
+          group={drill}
+          headingId={`${idPrefix}-drilldown-heading`}
+          onClose={() => setDrill(undefined)}
+          onOpenTicket={onOpenTicket}
+        />
       ) : null}
     </>
   );
@@ -909,12 +925,13 @@ const PAGE = 100;
 interface DrilldownPanelProps {
   request: PlanRequest;
   group: string | null;
+  headingId: string;
   onClose: () => void;
   onOpenTicket: ExploreProps["onOpenTicket"];
 }
 
 /** The source tickets behind the chart or one of its marks, from the same evaluation, with CSV download. */
-function DrilldownPanel({ request, group, onClose, onOpenTicket }: DrilldownPanelProps) {
+function DrilldownPanel({ request, group, headingId, onClose, onOpenTicket }: DrilldownPanelProps) {
   const [data, setData] = useState<DrilldownResult | null>(null);
   const [error, setError] = useState("");
   const [shown, setShown] = useState(PAGE);
@@ -947,8 +964,8 @@ function DrilldownPanel({ request, group, onClose, onOpenTicket }: DrilldownPane
 
   const title = data ? `Source rows: ${data.label}` : "Source rows";
   return (
-    <section className="drilldown" aria-labelledby="drilldown-heading">
-      <h4 id="drilldown-heading" ref={heading} tabIndex={-1}>
+    <section className="drilldown" aria-labelledby={headingId}>
+      <h4 id={headingId} ref={heading} tabIndex={-1}>
         {title}
       </h4>
       {error ? (

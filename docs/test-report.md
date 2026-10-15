@@ -106,9 +106,18 @@ Screenshots, written by `LTA_SCREENSHOTS=1 npm --prefix frontend run e2e -- layo
 | Overview | `screenshots/overview-1440.png` | `screenshots/overview-1024.png` |
 | Explore with chips and chart | `screenshots/explore-1440.png` | `screenshots/explore-1024.png` |
 | C's expanded source comparison | `screenshots/source-comparison-1440.png` | `screenshots/source-comparison-1024.png` |
+| Claimed hours by job, with its table (release 1.1) | `screenshots/claimed-hours-1440.png` | `screenshots/claimed-hours-1024.png` |
 
 They show employee records from the committed workbook and stay in this private repository (ADR 0003).
 **Person review:** pending.
+
+## Release 1.1
+
+Release 1.1 adds Overview panels on top of release one; each joins the acceptance checks above.
+
+| Panel | Tests |
+|---|---|
+| Claimed hours by job (#33) | `tests/test_claimed_hours_panel.py` (scope, measures, filters, drilldowns, the reviewed alternative); `test_acceptance_drilldowns.py::test_claimed_hours_by_job_drills_down_to_every_bar_and_its_total` under the four filter states and both measures; `frontend/e2e/claimed-hours.spec.ts`; the accessibility audit, chart checks and layout checks now wait for the panel |
 
 ## Logs
 

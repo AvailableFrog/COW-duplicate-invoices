@@ -150,3 +150,21 @@ def test_every_starter_plan_drills_down_to_its_chart_total_and_every_bar_under_t
             listed = app.client.post("/api/plans/drilldown", json={**body, "group": bar["id"]}).json()
             assert listed["reproduces"] is True, (starter["id"], bar["id"])
             assert listed["chart_total"] == bar["value"], (starter["id"], bar["id"])
+
+
+@STATES
+@pytest.mark.parametrize("measure", ["claimed_hours", "ticket_count"])
+def test_claimed_hours_by_job_drills_down_to_every_bar_and_its_total(app, params, measure):
+    # Ticket #33: the panel's request is an Explore plan, so its drilldowns are Explore's.
+    view = get(app, "/api/overview/claimed-hours", measure=measure, **params)
+    result = view["result"]
+    whole = app.client.post("/api/plans/drilldown", json={**view["request"], "group": None}).json()
+
+    for key in ("snapshot_fingerprint", "as_of", "versions", "filters", "plan"):
+        assert whole[key] == result[key], key
+    assert whole["chart_total"] == result["result"]["total"]
+    assert whole["reproduces"] is True
+    for bar in result["result"].get("bars", []):
+        listed = app.client.post("/api/plans/drilldown", json={**view["request"], "group": bar["id"]}).json()
+        assert listed["reproduces"] is True, bar["id"]
+        assert listed["chart_total"] == bar["value"], bar["id"]

@@ -920,6 +920,46 @@ export function fetchProcessingQueue(filters: FilterState, signal?: AbortSignal)
 }
 
 /** The value-context panel's BBD figures under the filters, with any analyst-reviewed alternative. */
+/** One way of measuring the claimed-hours-by-job panel (ticket #33). */
+export interface ClaimedHoursMeasure {
+  id: "claimed_hours" | "ticket_count";
+  label: string;
+}
+
+/** The fixed plan behind the panel and the Overview filters it ran under, as the server built them. */
+export interface ClaimedHoursRequest {
+  plan: Plan;
+}
+
+export interface ClaimedHoursReviewed {
+  label: string;
+  note: string;
+  replaced_tickets: number;
+  request: ClaimedHoursRequest;
+  result: PlanResult;
+}
+
+export interface ClaimedHoursResponse extends Provenance {
+  title: string;
+  question: string;
+  note: string;
+  measure: ClaimedHoursMeasure["id"];
+  measures: ClaimedHoursMeasure[];
+  request: ClaimedHoursRequest;
+  result: PlanResult;
+  reviewed: ClaimedHoursReviewed | null;
+}
+
+export function fetchClaimedHours(
+  filters: FilterState,
+  measure: ClaimedHoursMeasure["id"],
+  signal?: AbortSignal,
+): Promise<ClaimedHoursResponse> {
+  const params = new URLSearchParams(filterQuery(filters));
+  params.set("measure", measure);
+  return getJson<ClaimedHoursResponse>(`/api/overview/claimed-hours?${params.toString()}`, signal);
+}
+
 export function fetchValueContext(filters: FilterState, signal?: AbortSignal): Promise<ValueContextResponse> {
   return getJson<ValueContextResponse>(`/api/overview/value-context?${filterQuery(filters)}`, signal);
 }
