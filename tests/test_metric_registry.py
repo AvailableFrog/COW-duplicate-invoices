@@ -28,7 +28,10 @@ def test_the_registry_declares_the_thirteen_prd_metrics_the_value_panel_and_read
 
     assert body["registry_version"]
     assert body["versions"]["registry"] == body["registry_version"]
-    assert [metric["id"] for metric in body["metrics"]] == PRD_METRIC_IDS + VALUE_PANEL_METRIC_IDS + READINESS_METRIC_IDS
+    # Ticket #33 adds the claimed-hours panel's reviewed alternative right after the metric it adjusts.
+    expected = PRD_METRIC_IDS + VALUE_PANEL_METRIC_IDS + READINESS_METRIC_IDS
+    expected.insert(expected.index("claimed_hours") + 1, "reviewed_claimed_hours")
+    assert [metric["id"] for metric in body["metrics"]] == expected
 
 
 def test_every_metric_states_each_attribute_the_prd_requires(app):

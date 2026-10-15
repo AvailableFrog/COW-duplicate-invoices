@@ -228,4 +228,7 @@ def test_the_registry_declares_the_panel_metrics_and_which_one_reads_review_link
         assert metrics[metric_id]["unit"] == "BBD"
         assert metrics[metric_id]["availability"]["status"] == "available"
     assert metrics[EXTRA_CLAIM]["grain"] == "Possible duplicate"
-    assert [metric_id for metric_id, metric in metrics.items() if metric["reads_review_links"]] == [REVIEWED]
+    # The value panel's reviewed figure, and (ticket #33) the claimed-hours panel's reviewed alternative.
+    assert [metric_id for metric_id, metric in metrics.items() if metric["reads_review_links"]] == [
+        "reviewed_claimed_hours", REVIEWED,
+    ]

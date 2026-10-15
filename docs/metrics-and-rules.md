@@ -1,7 +1,7 @@
 # Metrics and matching rules
 
 Generated from the running service by `tests/test_reference_docs.py`; do not edit by hand.
-Registry 1.6.0, rules 1.4.0, parser 1.0.0, app 0.1.0.
+Registry 1.7.0, rules 1.4.0, parser 1.0.0, app 0.1.0.
 Every Overview tile, chart and Explore plan reads its numbers from these metrics, and every possible duplicate comes from these rules.
 
 ## Metrics
@@ -176,6 +176,25 @@ Regular Hours + Overtime + Double Time as recorded, with no pay multipliers. Rep
 | Requires columns | none |
 | Buckets | none |
 | Reads review links | no |
+
+### `reviewed_claimed_hours`: Analyst-reviewed claimed hours
+
+Claimed hours (Regular Hours + Overtime + Double Time as recorded) for every Ticket under the filters except those a reviewer's kept/replaced link marks as replaced. Offered only beside the recorded figure, never instead of it.
+
+| Property | Value |
+|---|---|
+| Unit | hours |
+| Grain | Ticket |
+| Statistic | sum |
+| Allowed dimensions | Approval Status; Keyed; Job Number; Job Name; Supervisor; Occupation |
+| Null treatment | A Ticket with a missing or invalid hour component is left out and reported in a coverage warning, never counted as zero. |
+| Date basis | Totals cover all dates unless a date range is set; a range always names its date basis. |
+| Exclusions | Tickets an explicit kept/replaced link marks as replaced; a Review Outcome or note alone never does; Tickets with a missing or invalid Regular Hours, Overtime or Double Time cell |
+| Lineage | Each contributing Ticket's three hour cells, and the local review file's kept/replaced links. |
+| Percentage of | none |
+| Requires columns | none |
+| Buckets | none |
+| Reads review links | yes |
 
 ### `employee_label_count`: Employee labels
 

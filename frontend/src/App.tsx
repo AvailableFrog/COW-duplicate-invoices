@@ -38,6 +38,7 @@ import { ProcessingQueue, type OpenQueueTicket } from "./ProcessingQueue";
 import { ReviewPriorities, type OpenEvidence } from "./ReviewPriorities";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
 import { ValueContext } from "./ValueContext";
+import { ClaimedHoursByJob } from "./ClaimedHoursByJob";
 
 type Tab = "overview" | "explore";
 
@@ -405,6 +406,12 @@ export function App() {
             ) : (
               <p className="status">Loading the data readiness counts…</p>
             )}
+            <ClaimedHoursByJob
+              filters={filters}
+              generation={generation}
+              reviewGeneration={reviewGeneration}
+              onOpenTicket={openExploreTicket}
+            />
             {valueError ? (
               <p className="notice notice-error" role="alert">
                 The value context could not be loaded: {valueError}. Change the filters or reload the page.

@@ -17,6 +17,7 @@ const PETER = "Possible duplicate L225526+L225761";
 const F = "Possible duplicate L224030+L224175";
 const H = "Possible duplicate L225309+L225552";
 const J = "Possible duplicate L226276+L226320";
+const CLAIMED_HOURS = "Claimed hours by job (Approved, Job Number not 0)";
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
 
 async function audit(page: Page, label: string, scope?: string): Promise<void> {
@@ -36,6 +37,8 @@ function sourceRow(drawer: Locator, field: string): Locator {
 async function openOverview(page: Page, baseURL: string): Promise<void> {
   await page.goto(baseURL);
   await expect(page.getByRole("button", { name: PETER })).toBeVisible();
+  // The release 1.1 panels load on their own; wait for them so every check covers them too.
+  await expect(page.getByRole("region", { name: CLAIMED_HOURS }).locator('[role="graphics-document"]')).toHaveCount(1);
 }
 
 async function startExplore(page: Page): Promise<ReturnType<Page["getByRole"]>> {

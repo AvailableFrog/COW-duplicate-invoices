@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
 from labour_ticket_analytics import (
-    data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, value_context,
+    claimed_hours, data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, value_context,
 )
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
@@ -608,6 +608,52 @@ def create_app(state: AppState) -> FastAPI:
                 results, reviewed, replaced_rows, lambda rows: state.store.status_counts(fingerprint, rows),
             ),
             "filters": filters.payload(),
+            **context(fingerprint),
+        }
+
+    @app.get("/api/overview/claimed-hours")
+    def claimed_hours_view(query: dict = Depends(filter_query), measure: str = claimed_hours.DEFAULT_MEASURE) -> dict:
+        """Claimed hours (or tickets) by job under the Overview filters: a fixed Explore plan, with its request so
+        the drilldown, table and exports are Explore's, and the analyst-reviewed alternative once links exist."""
+        chosen = claimed_hours.MEASURE_BY_ID.get(measure)
+        if chosen is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "unknown_measure", "field": "measure",
+                    "message": f"no measure {measure!r}; measures: " + ", ".join(claimed_hours.MEASURE_BY_ID),
+                },
+            )
+        fingerprint = state.active_fingerprint
+        inheritance = claimed_hours.inherited(query)
+
+        def run(metric_id: str) -> tuple[dict, dict]:
+            request = {"plan": claimed_hours.plan(metric_id), "inherited": inheritance}
+            _, executed, cache = executed_plan(request)
+            return request, {**executed.payload, "cache": cache, **context(fingerprint)}
+
+        request, result = run(chosen.metric_id)
+        replaced = state.review.replaced_rows(fingerprint)
+        reviewed = None
+        if replaced and chosen.reviewed_metric_id:
+            reviewed_request, reviewed_result = run(chosen.reviewed_metric_id)
+            reviewed = {
+                "label": claimed_hours.REVIEWED_LABEL,
+                "note": claimed_hours.REVIEWED_NOTE,
+                "replaced_tickets": len(replaced),
+                "request": reviewed_request,
+                "result": reviewed_result,
+            }
+        return {
+            "title": chosen.title,
+            "question": claimed_hours.QUESTION,
+            "note": claimed_hours.NOTE,
+            "measure": chosen.id,
+            "measures": [item.payload() for item in claimed_hours.MEASURES],
+            "request": request,
+            "result": result,
+            "reviewed": reviewed,
+            "filters": result["filters"],
             **context(fingerprint),
         }
 
