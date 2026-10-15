@@ -97,6 +97,8 @@ def test_the_bucket_drilldowns_reproduce_every_bucket_and_sum_to_the_chart_total
         for bucket in item["buckets"]:
             listed = drill(app, item["metric_id"], bucket["id"])
             assert listed["tickets"] == len(listed["rows"]) == bucket["tickets"]
+            for key in ("snapshot_fingerprint", "as_of", "versions", "filters"):
+                assert listed[key] == body[key]
             assert all(bucket["min"] <= row["value"] and (bucket["max"] is None or row["value"] <= bucket["max"]) for row in listed["rows"])
             seen |= {row["excel_row"] for row in listed["rows"]}
         assert len(seen) == item["total"]

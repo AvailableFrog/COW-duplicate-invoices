@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from labour_ticket_analytics.metrics import Metric
+
 
 @dataclass(frozen=True)
 class Queue:
@@ -38,8 +40,8 @@ NOTE = (
 )
 
 
-def chart(queue: Queue, result: dict[str, Any], measured_on: str) -> dict[str, Any]:
-    """One chart from its metric's evaluated result: the bucket counts, total and what was left out."""
+def chart(queue: Queue, metric: Metric, result: dict[str, Any]) -> dict[str, Any]:
+    """One chart from its registry metric and that metric's evaluated result: bucket counts, total and exclusions."""
     summary = result["summary"] or {}
     return {
         "metric_id": queue.metric_id,
@@ -49,7 +51,7 @@ def chart(queue: Queue, result: dict[str, Any], measured_on: str) -> dict[str, A
         "definition": result["metric"]["definition"],
         "unit": result["metric"]["unit"],
         "caption": CAPTION,
-        "measured_on": measured_on,
+        "measured_on": metric.measured_on,
         "chart": "bar_horizontal",
         "availability": result["availability"],
         "total": summary.get("count", 0),

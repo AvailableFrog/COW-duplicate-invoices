@@ -73,7 +73,7 @@ class Partial:
 
 @dataclass(frozen=True)
 class Bucket:
-    """One range of a distribution metric's values, both ends inclusive; no `max` means open-ended."""
+    """One range of a whole-number distribution's values, both ends inclusive; no `max` means open-ended."""
 
     id: str
     label: str

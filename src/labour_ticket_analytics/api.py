@@ -210,7 +210,10 @@ def create_app(state: AppState) -> FastAPI:
         try:
             return state.store.evaluate_metric(fingerprint, metric, filters, state.as_of, **options)
         except MetricError as error:
-            raise HTTPException(status_code=error.status, detail=error.payload()) from error
+            raise metric_failure(error) from error
+
+    def metric_failure(error: MetricError) -> HTTPException:
+        return HTTPException(status_code=error.status, detail=error.payload())
 
     def saved_outcome(saved: dict, excel_rows: list[int]) -> dict:
         """A pair's saved Review Outcome label, Not reviewed when none was saved."""
@@ -311,7 +314,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             listed = state.store.metric_bucket_rows(fingerprint, metric, filters, state.as_of, bucket_id)
         except MetricError as error:
-            raise HTTPException(status_code=error.status, detail=error.payload()) from error
+            raise metric_failure(error) from error
         return {**listed, **context(fingerprint)}
 
     @app.get("/api/overview/processing-queue")
@@ -321,7 +324,7 @@ def create_app(state: AppState) -> FastAPI:
         filters = active_filters(fingerprint, query)
         return {
             "charts": [
-                processing_queue.chart(queue, evaluate(fingerprint, queue.metric_id, filters), METRICS[queue.metric_id].measured_on)
+                processing_queue.chart(queue, METRICS[queue.metric_id], evaluate(fingerprint, queue.metric_id, filters))
                 for queue in processing_queue.QUEUES
             ],
             "caption": processing_queue.CAPTION,
