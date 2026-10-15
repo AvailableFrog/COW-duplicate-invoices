@@ -111,6 +111,9 @@ RECOGNISED = [
      [[("2026-09-02", "2026-09-08")]], [["year_omitted"]], "agrees"),
     ("Incentive 4 Sep 26 to 10 Sep 26.", dt.datetime(2026, 9, 11), ["4 Sep 26 to 10 Sep 26"],
      ["4 September 2026 to 10 September 2026"], [[("2026-09-04", "2026-09-10")]], [["two_digit_year"]], "conflict"),
+    # A year written on one end is the range's year.
+    ("Week of 9 Sep to 12 Sep 2026", dt.datetime(2026, 9, 10), ["9 Sep to 12 Sep 2026"],
+     ["9 September 2026 to 12 September 2026"], [[("2026-09-09", "2026-09-12")]], [[]], "agrees"),
 ]
 
 

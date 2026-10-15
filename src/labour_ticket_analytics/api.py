@@ -257,13 +257,6 @@ def create_app(state: AppState) -> FastAPI:
         tickets = state.store.readiness_tickets(fingerprint, filters, result.get("contributing_rows", []))
         return result, [data_readiness.ticket_row(check, ticket, window) for ticket in tickets]
 
-    def readiness_summary(check: data_readiness.Check, rows: list[dict]) -> str | None:
-        if check.id == "missing_rates":
-            return data_readiness.missing_rate_summary(rows)
-        if check.id == "description_date_conflicts":
-            return data_readiness.description_date_summary(rows)
-        return None
-
     def metric_failure(error: MetricError) -> HTTPException:
         return HTTPException(status_code=error.status, detail=error.payload())
 
@@ -426,9 +419,9 @@ def create_app(state: AppState) -> FastAPI:
         for check in data_readiness.CHECKS:
             if check.metric_id is None:
                 checks.append(data_readiness.summary_item(check, None, len(unresolved_aliases(fingerprint, filters)), None))
-            elif check.id in ("missing_rates", "description_date_conflicts"):
+            elif check.id in data_readiness.SUMMARISED:
                 result, rows = readiness_rows(fingerprint, filters, check, window)
-                checks.append(data_readiness.summary_item(check, result, None, readiness_summary(check, rows)))
+                checks.append(data_readiness.summary_item(check, result, None, data_readiness.summary(check, rows)))
             else:
                 result = evaluate(fingerprint, check.metric_id, filters, window=window_bounds(window))
                 checks.append(data_readiness.summary_item(check, result, None, None))
@@ -466,7 +459,7 @@ def create_app(state: AppState) -> FastAPI:
         result, rows = readiness_rows(fingerprint, filters, check, window)
         return {
             "check": data_readiness.summary_item(
-                check, result, len(rows) if result is None else None, readiness_summary(check, rows),
+                check, result, len(rows) if result is None else None, data_readiness.summary(check, rows),
             ),
             "count": len(rows),
             "rows": rows,

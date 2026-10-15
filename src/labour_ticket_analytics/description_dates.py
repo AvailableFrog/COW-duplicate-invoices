@@ -22,7 +22,8 @@ Recognised references, case-insensitive (decision-log entry 68):
   A slash time such as ``7/30am`` is not a date.
 - Ranges joined by ``to``, ``till``, ``until``, ``through``, ``thru`` or a dash, where one end may
   give only an ordinal day and borrow the other end's month and year: ``2nd to 8th Sep``,
-  ``Sep 2nd to the 10th``, ``11 th September -22nd September``, ``2026-10-09 to 2026-10-29``.
+  ``Sep 2nd to the 10th``, ``11 th September -22nd September``, ``2026-10-09 to 2026-10-29``. A year
+  written on one end only is the whole range's year.
 
 Anything else is not a date reference: an ordinal day with no month (``the 10th``), a month name
 with no day, or numbers with dots or colons, which in descriptions are amounts and times.
@@ -283,6 +284,11 @@ def _range(text: str, first: _Atom, second: _Atom, date: dt.date | None) -> Date
     elif second.kind == "ordinal":
         (_, month), = first.readings
         second = _Atom(second.start, second.end, "day_month", ((second.day, month),), None, first.year, first.two_digit_year)
+    # A year written on one end only is the range's year: "9 Sep to 12 Sep 2026".
+    if first.year is None and second.year is not None:
+        first = _Atom(first.start, first.end, first.kind, first.readings, None, second.year, second.two_digit_year)
+    elif second.year is None and first.year is not None:
+        second = _Atom(second.start, second.end, second.kind, second.readings, None, first.year, first.two_digit_year)
     start = _resolve(first, date)
     end = _resolve(second, date)
     if not start or not end:

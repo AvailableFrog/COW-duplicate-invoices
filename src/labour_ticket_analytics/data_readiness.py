@@ -24,7 +24,7 @@ from labour_ticket_analytics.filters import FilterError
 TITLE = "Data readiness"
 QUESTION = "Which records cannot be reliably compared or valued?"
 NOTE = (
-    "Each count lists exactly the records it counts. The counts overlap, since one ticket can need several checks, "
+    "Each count lists exactly what it counts. The counts overlap, since one ticket can need several checks, "
     "so they are never added together. Nothing is corrected: dates are shown as recorded, no year is reassigned, "
     "a description never changes Date and a missing Rate is never valued at zero."
 )
@@ -205,6 +205,19 @@ def alias_row(alias: dict[str, Any], numbers: dict[int, str | None], name: Calla
         "excel_row": first,
         "possible_duplicate": name(first),
     }
+
+
+def summary(check: Check, rows: list[dict[str, Any]]) -> str | None:
+    """The line a count adds in words, read from the rows it lists; None for a count that needs none."""
+    if check.id == "missing_rates":
+        return missing_rate_summary(rows)
+    if check.id == "description_date_conflicts":
+        return description_date_summary(rows)
+    return None
+
+
+# The counts whose summary line is read from their rows, so the view lists them even before a drilldown.
+SUMMARISED = ("missing_rates", "description_date_conflicts")
 
 
 def missing_rate_summary(rows: list[dict[str, Any]]) -> str:
