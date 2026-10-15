@@ -189,6 +189,9 @@ function AnnotationPanel({ annotation }: { annotation: Annotation }) {
   );
 }
 
+/** Parse results that cannot settle overlap or separation, so the card says what to do next. */
+const UNCERTAIN_PARSES = new Set(["ambiguous", "flagged", "unrecognized"]);
+
 function TimeParseCard({ member, parse }: { member: EvidenceMember; parse: TimeParse }) {
   return (
     <li className="parse-card">
@@ -231,6 +234,12 @@ function TimeParseCard({ member, parse }: { member: EvidenceMember; parse: TimeP
           {note}
         </p>
       ))}
+      {UNCERTAIN_PARSES.has(parse.status) ? (
+        <p className="next-step">
+          Next step: confirm the start and finish times with the employee or supervisor before treating these tickets
+          as overlapping or as separate work.
+        </p>
+      ) : null}
     </li>
   );
 }
@@ -345,7 +354,8 @@ function SharedEvidence({ data }: { data: ShownEvidence }) {
 
       <section aria-labelledby="drawer-timeline">
         <h3 id="drawer-timeline">Claim timeline</h3>
-        <div className="table-scroll">
+        {/* Focusable so the table scrolls by keyboard at narrow widths; it holds no other control. */}
+        <div className="table-scroll" tabIndex={0} role="region" aria-label="Claim timeline, scrollable">
           <table className="evidence-table timeline-table">
             <caption className="visually-hidden">Tickets in Created order, oldest first</caption>
             <thead>
@@ -397,7 +407,7 @@ function SharedEvidence({ data }: { data: ShownEvidence }) {
             : `${differing} ${differing === 1 ? "field differs" : "fields differ"}, marked Differs: ${data.differing_fields.join(", ")}.`}
           {showWhitespace ? " Text is quoted; · is a space, → a tab, ↵ a line break. The values are unchanged." : ""}
         </p>
-        <div className="table-scroll">
+        <div className="table-scroll" tabIndex={0} role="region" aria-label="Source comparison, scrollable">
           <table className="evidence-table source-table">
             <caption className="visually-hidden">Source fields down the side, one column per ticket</caption>
             <thead>

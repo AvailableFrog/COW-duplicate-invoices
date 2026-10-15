@@ -4,7 +4,7 @@
   --muted: #5f6b73;
   --line: #dcd9d2;
   --accent: #0f7b7b;
-  --unresolved: #b4690e;
+  --unresolved: #9a5a0b;
   --unresolved-wash: #fdf1df;
   --error: #b42318;
   --panel: #ffffff;
@@ -46,6 +46,7 @@ body {
 }
 
 .brand-name {
+  margin: 0;
   font-size: 1.1rem;
   font-weight: 650;
   letter-spacing: 0.08em;
@@ -166,6 +167,7 @@ body {
   font-size: 0.9rem;
 }
 
+.table-scroll:focus-visible,
 .reimport:focus-visible,
 .tabs button:focus-visible,
 summary:focus-visible {
@@ -329,6 +331,13 @@ summary:focus-visible {
 .filter-bar input:focus-visible,
 .as-of input:focus-visible,
 .secondary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A date input's focus sits on its inner day, month and year fields, so the input itself never matches
+   :focus-visible; draw the same ring whenever focus is anywhere inside it. */
+input[type="date"]:focus-within {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
@@ -1818,7 +1827,7 @@ summary:focus-visible {
 .exclusions {
   margin: 6px 0 10px;
   padding: 8px 12px;
-  border-left: 3px solid var(--unresolved, #b4690e);
+  border-left: 3px solid var(--unresolved, #9a5a0b);
   background: var(--bg);
 }
 

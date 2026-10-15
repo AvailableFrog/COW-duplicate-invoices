@@ -13,7 +13,7 @@ export const CHART_COLOURS = {
   accent: "#0f7b7b",
   // The selected bar: darker than the accent, and always named in its label too, never colour alone.
   selected: "#0a4747",
-  unresolved: "#b4690e",
+  unresolved: "#9a5a0b",
 } as const;
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';

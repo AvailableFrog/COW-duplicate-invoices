@@ -46,6 +46,10 @@ type LoadState =
   | { kind: "ready"; header: HeaderResponse }
   | { kind: "failed"; message: string };
 
+/** The first state a reviewer sees; it says what to do if loading never finishes. */
+const LOADING_HEADER =
+  "Loading the Snapshot header… If it has not appeared within a few seconds, check the terminal where the service is running.";
+
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [tab, setTab] = useState<Tab>("overview");
@@ -175,7 +179,10 @@ export function App() {
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      setReimportStatus(`The workbook was not reimported and the current Snapshot stays active: ${message}`);
+      setReimportStatus(
+        `The workbook was not reimported and the current Snapshot stays active: ${message}. ` +
+          "Correct the workbook at the path the service was launched with, then choose Reimport again.",
+      );
     } finally {
       setReimporting(false);
     }
@@ -291,7 +298,7 @@ export function App() {
     <div className="app">
       <header className="masthead">
         <div className="brand">
-          <span className="brand-name">Labour Tickets</span>
+          <h1 className="brand-name">Labour Tickets</h1>
           <span className="brand-sub">Analytics for one export, every number traceable to its source cells</span>
         </div>
         {state.kind === "ready" ? (
@@ -306,18 +313,20 @@ export function App() {
           </div>
         ) : (
           <p className="status" role="status">
-            {state.kind === "loading" ? "Loading the Snapshot header…" : null}
+            {state.kind === "loading" ? LOADING_HEADER : null}
           </p>
         )}
       </header>
 
-      <nav className="tabs" aria-label="Primary">
-        <button type="button" role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>
-          Overview
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "explore"} onClick={() => setTab("explore")}>
-          Explore
-        </button>
+      <nav aria-label="Primary">
+        <div className="tabs" role="tablist" aria-label="Views">
+          <button type="button" role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>
+            Overview
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "explore"} onClick={() => setTab("explore")}>
+            Explore
+          </button>
+        </div>
       </nav>
 
       {tab === "overview" ? (
@@ -407,7 +416,7 @@ export function App() {
             )}
           </section>
         ) : state.kind !== "ready" ? (
-          <p className="status">Loading the Snapshot header…</p>
+          <p className="status">{LOADING_HEADER}</p>
         ) : null}
         {/* Kept mounted while the Overview shows, so the starting choice and chips survive a tab switch. */}
         {state.kind === "ready" ? (
