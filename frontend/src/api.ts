@@ -139,6 +139,8 @@ export interface Candidate {
   fields_compared: string[];
   evidence_strength: string;
   reason: string;
+  /** The PRD pattern this match illustrates, usually its rule's. */
+  pattern: string;
   /** The Review Outcome saved on this Candidate's Ticket pair; Not reviewed when none. Display only, never a rank input. */
   outcome: OutcomeLabel;
 }
@@ -322,7 +324,16 @@ export interface PossibleDuplicateReview {
   history: HistoryEntry[];
 }
 
-export interface EvidenceResponse extends Provenance {
+/** The evidence shown for any set of Tickets, in the drawer for a possible duplicate or a compared pair. */
+export interface ShownEvidence {
+  members: EvidenceMember[];
+  timeline: { fields: string[]; entries: { excel_row: number; ticket_number: string | null; cells: (SourceCell | null)[] }[] };
+  fields: SourceFieldRow[];
+  differing_fields: string[];
+  annotations: Annotation[];
+}
+
+export interface EvidenceResponse extends Provenance, ShownEvidence {
   display_id: string;
   tier: PriorityTier;
   exact_repeat_not_flagged: boolean;
@@ -331,12 +342,35 @@ export interface EvidenceResponse extends Provenance {
   reason: string;
   candidates: EvidenceCandidate[];
   status_breakdown: StatusBreakdown[];
-  members: EvidenceMember[];
-  timeline: { fields: string[]; entries: { excel_row: number; ticket_number: string | null; cells: (SourceCell | null)[] }[] };
-  fields: SourceFieldRow[];
-  differing_fields: string[];
-  annotations: Annotation[];
   review: PossibleDuplicateReview;
+}
+
+/** One rule's answer for a Ticket pair: whether it matched, and why or why not. */
+export interface RuleVerdict {
+  rule_id: string;
+  rule_label: string;
+  matched: boolean;
+  evidence_strength: string;
+  fields_compared: string[];
+  reason: string;
+}
+
+export interface PairMember extends EvidenceMember {
+  /** The display name of the possible duplicate this Ticket is in; null when it is in none. */
+  possible_duplicate: string | null;
+}
+
+/** Why two Tickets are or are not linked, with or without a Candidate. */
+export interface PairExplanation extends Provenance, ShownEvidence {
+  excel_rows: [number, number];
+  same_employee_and_date: boolean;
+  linked: boolean;
+  rules: RuleVerdict[];
+  summary: string;
+  time_comparison: TimeComparison;
+  /** The possible duplicate holding both Tickets, if one does. */
+  possible_duplicate: string | null;
+  members: PairMember[];
 }
 
 async function failure(response: Response): Promise<Error> {
@@ -393,6 +427,19 @@ export function fetchEvidence(
 ): Promise<EvidenceResponse> {
   return getJson<EvidenceResponse>(
     `/api/snapshots/${encodeURIComponent(fingerprint)}/tickets/${excelRow}/possible-duplicate?${filterQuery(filters)}`,
+    signal,
+  );
+}
+
+/** Why two Tickets are or are not linked: every rule's verdict and how their work periods compare. */
+export function fetchPairExplanation(
+  fingerprint: string,
+  rows: [number, number],
+  filters: FilterState,
+  signal?: AbortSignal,
+): Promise<PairExplanation> {
+  return getJson<PairExplanation>(
+    `/api/snapshots/${encodeURIComponent(fingerprint)}/pairs/${rows[0]}/${rows[1]}?${filterQuery(filters)}`,
     signal,
   );
 }

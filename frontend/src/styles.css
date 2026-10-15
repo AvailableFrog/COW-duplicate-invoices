@@ -948,3 +948,25 @@ summary:focus-visible {
   font-weight: 600;
   color: var(--accent);
 }
+
+.compare {
+  margin-top: 24px;
+}
+
+.compare h3 {
+  margin: 0 0 4px;
+}
+
+.compare-form .status {
+  margin: 0;
+  align-self: center;
+}
+
+.candidate-unmatched {
+  background: var(--bg);
+}
+
+.pair-membership {
+  margin: 8px 0;
+  padding-left: 1.2rem;
+}

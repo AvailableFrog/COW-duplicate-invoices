@@ -79,6 +79,7 @@ CREATE TABLE candidates (
     fields_compared VARCHAR[] NOT NULL,
     evidence_strength VARCHAR NOT NULL,
     reason VARCHAR NOT NULL,
+    pattern VARCHAR NOT NULL,
     PRIMARY KEY (snapshot_fingerprint, rule_id, first_row, second_row)
 );
 """
@@ -153,7 +154,7 @@ class SnapshotStore:
             self.connection.execute("BEGIN TRANSACTION")
             try:
                 self._insert(snapshot)
-                rules.record_candidates(self.connection, snapshot.fingerprint)
+                rules.record_candidates(self.connection, snapshot.fingerprint, time_parses)
             except BaseException:
                 self.connection.execute("ROLLBACK")
                 raise
@@ -372,6 +373,35 @@ class SnapshotStore:
             parses = {member["excel_row"]: self._time_parses[fingerprint][member["excel_row"]] for member in item["members"]}
         return evidence.evidence(item, tickets, parses, ANNOTATIONS)
 
+    def pair_explanation(
+        self, fingerprint: str, first_row: int, second_row: int, filters: Filters
+    ) -> dict[str, Any] | None:
+        """Why two Tickets are or are not linked, with their evidence; None when either Ticket is unknown.
+
+        Every rule gives its verdict, so a pair with no Candidate (such as two
+        separate work periods) is explained as well as a linked one.
+        """
+        rows = sorted((first_row, second_row))
+        with self._lock:
+            parses = self._time_parses.get(fingerprint)
+            if parses is None or any(row not in parses for row in rows):
+                return None
+            facts = rules.pair_tickets(self.connection, fingerprint, parses, rows)
+            members = self._members(fingerprint, filters, "list_contains($rows, t.excel_row)", {"rows": rows})
+            tickets = [self._ticket(fingerprint, row) for row in rows]
+            # The possible duplicate each Ticket is in, by display name; a Ticket in none has no entry.
+            linked = self._candidate_members(fingerprint, filters)
+            display_ids: dict[int, str] = {}
+            for component in rules.compose(self._candidates(fingerprint)):
+                component_rows = {row for candidate in component for row in (candidate.first_row, candidate.second_row)}
+                if component_rows & set(rows):
+                    name = rules.display_id([linked[row] for row in component_rows])
+                    display_ids.update(dict.fromkeys(component_rows & set(rows), name))
+        explanation = rules.explain(facts[rows[0]], facts[rows[1]])
+        return evidence.pair_explanation(
+            explanation, [members[row] for row in rows], tickets, parses, display_ids, ANNOTATIONS
+        )
+
     def excel_rows_by_ticket_number(self, fingerprint: str, ticket_numbers: Iterable[str]) -> dict[str, int]:
         """Where each ticket number sits in a Snapshot, compared as written; the first row if it repeats."""
         with self._lock:
@@ -411,9 +441,9 @@ class SnapshotStore:
 
     def _candidates(self, fingerprint: str) -> list[rules.Candidate]:
         return [
-            rules.Candidate(row[0], row[1], row[2], tuple(row[3]), row[4], row[5])
+            rules.Candidate(row[0], row[1], row[2], tuple(row[3]), row[4], row[5], row[6])
             for row in self.connection.execute(
-                "SELECT rule_id, first_row, second_row, fields_compared, evidence_strength, reason"
+                "SELECT rule_id, first_row, second_row, fields_compared, evidence_strength, reason, pattern"
                 " FROM candidates WHERE snapshot_fingerprint = ?",
                 [fingerprint],
             ).fetchall()
@@ -421,12 +451,18 @@ class SnapshotStore:
 
     def _candidate_members(self, fingerprint: str, filters: Filters) -> dict[int, dict[str, Any]]:
         """Each Ticket in a Candidate with its source state and whether it is inside the filters."""
+        return self._members(fingerprint, filters, rules.IN_CANDIDATE_SQL)
+
+    def _members(
+        self, fingerprint: str, filters: Filters, scope_sql: str, scope_parameters: dict[str, Any] | None = None
+    ) -> dict[int, dict[str, Any]]:
+        """Tickets matching `scope_sql` (over ticket_values `t`) with their source state and filter membership."""
         filter_sql, parameters = filters.sql("t")
         rows = self.connection.execute(
             "SELECT t.excel_row, t.ticket_number, t.employee_name, t.work_date, t.job_number, t.status, t.keyed,"
             f" COALESCE({metrics.FLAGGED_DUPLICATE_SCOPE}, false), t.created, COALESCE({filter_sql}, false)"
-            f" FROM ticket_values t WHERE t.snapshot_fingerprint = $fingerprint AND {rules.IN_CANDIDATE_SQL}",
-            {**parameters, "fingerprint": fingerprint},
+            f" FROM ticket_values t WHERE t.snapshot_fingerprint = $fingerprint AND {scope_sql}",
+            {**parameters, **(scope_parameters or {}), "fingerprint": fingerprint},
         ).fetchall()
         return {
             row[0]: {

@@ -90,8 +90,13 @@ def test_the_reason_and_every_candidate_edge_show_its_rule_fields_compared_and_e
     assert [
         (c["excel_rows"], c["rule_id"], c["rule_label"], c["fields_compared"], c["evidence_strength"])
         for c in peter["candidates"]
-    ] == [([620, 855], "strict_repeat", "Strict repeat", STRICT_FIELDS, "strong")]
+    ] == [
+        ([620, 855], "strict_repeat", "Strict repeat", STRICT_FIELDS, "strong"),
+        # Ticket #9: the identical confident times also overlap, so a second rule links the same pair.
+        ([620, 855], "work_period_conflict", "Work-period conflict", ["Employee", "Date", "Time"], "moderate"),
+    ]
     assert peter["candidates"][0]["reason"].startswith("Same claim submitted twice")
+    assert peter["candidates"][1]["reason"].startswith("Times overlap")
     assert peter["pattern_labels"] == ["Same claim appears twice"]
     assert peter["tier"]["rank"] == 1
     assert peter["exact_repeat_not_flagged"] is True
@@ -131,7 +136,7 @@ def test_each_member_carries_its_time_parse_with_raw_text_confidence_and_parser_
             ("confident", {"start": "07:30", "end": "16:30"}, None)
         ]
         assert parse["parser_version"] == peter["versions"]["parser"]
-    assert [c["time_comparison"]["result"] for c in peter["candidates"]] == ["overlap"]
+    assert [c["time_comparison"]["result"] for c in peter["candidates"]] == ["overlap", "overlap"]
 
 
 def test_an_ambiguous_time_shows_its_plausible_reading_labelled_assumed(tmp_path):

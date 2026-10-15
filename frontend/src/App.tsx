@@ -14,6 +14,7 @@ import {
   type ReviewPrioritiesResponse,
   type TilesResponse,
 } from "./api";
+import { CompareTickets, type OpenPair } from "./CompareTickets";
 import { EvidenceDrawer, type DrawerTarget } from "./EvidenceDrawer";
 import { ActiveFilters, FilterBar } from "./FilterBar";
 import { HeaderTiles } from "./HeaderTiles";
@@ -49,7 +50,18 @@ export function App() {
     if (!priorities) return;
     drawerOpener.current = opener;
     // Addressed by a member Ticket's Snapshot and Excel row; the display name is never a key (ADR 0004).
-    setDrawer({ fingerprint: priorities.snapshot_fingerprint, excelRow: item.members[0].excel_row, displayId: item.display_id });
+    setDrawer({
+      kind: "possible_duplicate",
+      fingerprint: priorities.snapshot_fingerprint,
+      excelRow: item.members[0].excel_row,
+      displayId: item.display_id,
+    });
+  };
+
+  const openPair: OpenPair = (rows, opener) => {
+    if (state.kind !== "ready") return;
+    drawerOpener.current = opener;
+    setDrawer({ kind: "pair", fingerprint: state.header.snapshot_fingerprint, rows });
   };
 
   function closeEvidence() {
@@ -199,6 +211,7 @@ export function App() {
             ) : (
               <p className="status">Loading the review priorities…</p>
             )}
+            {state.kind === "ready" ? <CompareTickets rowCount={state.header.snapshot.row_count} onCompare={openPair} /> : null}
             <p className="placeholder">
               The flagged duplicates, processing queue and data readiness views arrive with later tickets.
             </p>

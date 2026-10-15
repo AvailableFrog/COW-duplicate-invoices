@@ -370,6 +370,21 @@ def create_app(state: AppState) -> FastAPI:
         require_snapshot(fingerprint)
         return {**state.review.summary(fingerprint), **context(fingerprint)}
 
+    @app.get("/api/snapshots/{fingerprint}/pairs/{first_row}/{second_row}")
+    def pair_explanation(fingerprint: str, first_row: int, second_row: int, query: dict = Depends(filter_query)) -> dict:
+        """Why two Tickets are or are not linked: any two Tickets, with or without a Candidate."""
+        require_snapshot(fingerprint)
+        if first_row == second_row:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "two_tickets_required", "field": "excel_rows", "message": "give two different Excel rows"},
+            )
+        payload = state.store.pair_explanation(fingerprint, first_row, second_row, active_filters(fingerprint, query))
+        if payload is None:
+            missing = first_row if state.store.ticket(fingerprint, first_row) is None else second_row
+            raise no_ticket(fingerprint, missing)
+        return {**payload, **context(fingerprint)}
+
     @app.get("/api/snapshots/{fingerprint}/pairs/{first_row}/{second_row}/outcome")
     def pair_outcome(fingerprint: str, first_row: int, second_row: int) -> dict:
         pair = candidate_pair(fingerprint, first_row, second_row)

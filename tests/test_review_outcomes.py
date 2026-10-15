@@ -189,7 +189,9 @@ def test_the_ranked_list_carries_each_pairs_outcome_without_changing_its_order(r
     after = reviewed.get("/api/review-priorities").json()["possible_duplicates"]
 
     d = next(item for item in after if {m["excel_row"] for m in item["members"]} == {974, 1868})
-    assert [c["outcome"] for c in d["candidates"]] == [{"id": "confirmed_duplicate", "label": "Confirmed duplicate"}]
+    # D is linked by two rules (Strict repeat and Work-period conflict) but is one pair with one outcome.
+    assert [c["rule_id"] for c in d["candidates"]] == ["strict_repeat", "work_period_conflict"]
+    assert [c["outcome"] for c in d["candidates"]] == [{"id": "confirmed_duplicate", "label": "Confirmed duplicate"}] * 2
     assert [(item["display_id"], item["rank"], item["tier"]) for item in after] == [
         (item["display_id"], item["rank"], item["tier"]) for item in before
     ]

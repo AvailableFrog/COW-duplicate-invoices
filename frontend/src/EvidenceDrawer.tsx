@@ -2,23 +2,29 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   fetchEvidence,
+  fetchPairExplanation,
   type Annotation,
   type EvidenceCandidate,
   type EvidenceMember,
   type EvidenceResponse,
   type FilterState,
+  type PairExplanation,
+  type ShownEvidence,
   type SourceCell,
   type TimeComparison,
   type TimeParse,
 } from "./api";
 import { ReviewPanel } from "./ReviewPanel";
 
-/** What the drawer was opened on: a member Ticket, never the possible duplicate's display name. */
-export interface DrawerTarget {
-  fingerprint: string;
-  excelRow: number;
-  displayId: string;
-}
+/**
+ * What the drawer was opened on: a possible duplicate by one member Ticket (never its display name),
+ * or any two Tickets to compare, linked or not.
+ */
+export type DrawerTarget =
+  | { kind: "possible_duplicate"; fingerprint: string; excelRow: number; displayId: string }
+  | { kind: "pair"; fingerprint: string; rows: [number, number] };
+
+type Loaded = { kind: "possible_duplicate"; data: EvidenceResponse } | { kind: "pair"; data: PairExplanation };
 
 interface EvidenceDrawerProps {
   target: DrawerTarget | null;
@@ -31,7 +37,7 @@ interface EvidenceDrawerProps {
 // Each settled state remembers its target, so a newly opened drawer never shows the previous one's evidence.
 type LoadState =
   | { kind: "loading" }
-  | { kind: "ready"; target: DrawerTarget; data: EvidenceResponse }
+  | { kind: "ready"; target: DrawerTarget; loaded: Loaded }
   | { kind: "failed"; target: DrawerTarget; message: string };
 
 // Visible stand-ins for whitespace, shown only while "Show whitespace" is on.
@@ -94,8 +100,24 @@ function interval(value: { start: string; end: string }): string {
   return `${value.start}–${value.end}`;
 }
 
+/** How two Tickets' work periods compare; an overlap read from Plausible Readings is labelled assumed. */
+function ComparisonLine({ comparison }: { comparison: TimeComparison }) {
+  return (
+    <p>
+      {COMPARISON_LABELS[comparison.result]}
+      {comparison.intersection.length > 0 ? (
+        <span className="num">
+          {" "}
+          ({comparison.intersection.map(interval).join(", ")}, {comparison.overlap_minutes} minutes
+          {comparison.assumed ? ", assumed" : ""})
+        </span>
+      ) : null}
+      . <span className="muted">{comparison.explanation}</span>
+    </p>
+  );
+}
+
 function CandidateItem({ candidate }: { candidate: EvidenceCandidate }) {
-  const comparison = candidate.time_comparison;
   const [first, second] = candidate.excel_rows;
   return (
     <li className="candidate">
@@ -105,17 +127,7 @@ function CandidateItem({ candidate }: { candidate: EvidenceCandidate }) {
       </p>
       <p>{candidate.reason}</p>
       <p className="muted">Fields compared: {candidate.fields_compared.join(", ")}</p>
-      <p>
-        {COMPARISON_LABELS[comparison.result]}
-        {comparison.intersection.length > 0 ? (
-          <span className="num">
-            {" "}
-            ({comparison.intersection.map(interval).join(", ")}, {comparison.overlap_minutes} minutes
-            {comparison.assumed ? ", assumed" : ""})
-          </span>
-        ) : null}
-        . <span className="muted">{comparison.explanation}</span>
-      </p>
+      <ComparisonLine comparison={candidate.time_comparison} />
     </li>
   );
 }
@@ -216,8 +228,6 @@ function TimeParseCard({ member, parse }: { member: EvidenceMember; parse: TimeP
 }
 
 function Evidence({ data, onReviewChange }: { data: EvidenceResponse; onReviewChange: () => void }) {
-  const [showWhitespace, setShowWhitespace] = useState(false);
-  const differing = data.differing_fields.length;
   return (
     <>
       <section aria-labelledby="drawer-why">
@@ -250,6 +260,52 @@ function Evidence({ data, onReviewChange }: { data: EvidenceResponse; onReviewCh
         onChanged={onReviewChange}
       />
 
+      <SharedEvidence data={data} />
+    </>
+  );
+}
+
+/** Two compared Tickets: why they are or are not linked, then the same evidence a possible duplicate shows. */
+function PairEvidence({ data }: { data: PairExplanation }) {
+  return (
+    <>
+      <section aria-labelledby="drawer-why">
+        <h3 id="drawer-why">{data.linked ? "Why these tickets are linked" : "Why these tickets are not linked"}</h3>
+        <p className="drawer-reason">{data.summary}</p>
+        <ComparisonLine comparison={data.time_comparison} />
+        <ul className="candidates" aria-label="Each rule's verdict">
+          {data.rules.map((rule) => (
+            <li key={rule.rule_id} className={rule.matched ? "candidate" : "candidate candidate-unmatched"}>
+              <p>
+                <strong>{rule.rule_label}</strong>:{" "}
+                {rule.matched ? `matched · ${rule.evidence_strength} matching evidence` : "not matched"}
+              </p>
+              <p>{rule.reason}</p>
+              <p className="muted">Fields compared: {rule.fields_compared.join(", ")}</p>
+            </li>
+          ))}
+        </ul>
+        <ul className="pair-membership">
+          {data.members.map((member) => (
+            <li key={member.excel_row}>
+              <strong>{memberHeading(member)}</strong> <span className="muted num">row {member.excel_row}</span>:{" "}
+              {member.possible_duplicate ? `in ${member.possible_duplicate}` : "in no possible duplicate"}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <SharedEvidence data={data} />
+    </>
+  );
+}
+
+/** Annotations, timeline, source rows, Time as parsed and provenance: shown for any set of Tickets. */
+function SharedEvidence({ data }: { data: ShownEvidence }) {
+  const [showWhitespace, setShowWhitespace] = useState(false);
+  const differing = data.differing_fields.length;
+  return (
+    <>
       {data.annotations.map((annotation) => (
         <AnnotationPanel key={annotation.letter} annotation={annotation} />
       ))}
@@ -395,8 +451,18 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
   useEffect(() => {
     if (!target) return;
     const controller = new AbortController();
-    fetchEvidence(target.fingerprint, target.excelRow, filters, controller.signal)
-      .then((data) => setState({ kind: "ready", target, data }))
+    const load: Promise<Loaded> =
+      target.kind === "pair"
+        ? fetchPairExplanation(target.fingerprint, target.rows, filters, controller.signal).then((data) => ({
+            kind: "pair",
+            data,
+          }))
+        : fetchEvidence(target.fingerprint, target.excelRow, filters, controller.signal).then((data) => ({
+            kind: "possible_duplicate",
+            data,
+          }));
+    load
+      .then((loaded) => setState({ kind: "ready", target, loaded }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setState({ kind: "failed", target, message: error instanceof Error ? error.message : String(error) });
@@ -409,7 +475,13 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
     onReviewChange();
   }
 
-  const first = state.kind === "ready" ? state.data.members[0] : null;
+  const loaded = state.kind === "ready" ? state.loaded : null;
+  // Who and which day: one line when every ticket shown shares them, otherwise each ticket's own.
+  const who = loaded
+    ? [...new Set(loaded.data.members.map((m) => `${m.employee ?? "No employee"} · Date ${m.date ?? "not usable"}`))].join(
+        "; ",
+      )
+    : null;
   return (
     <dialog ref={dialog} className="drawer" aria-labelledby="drawer-title" onClose={onClose}>
       {target ? (
@@ -417,13 +489,16 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
           <header className="drawer-head">
             <div>
               <p className="eyebrow">
-                Possible duplicate{state.kind === "ready" ? ` · priority ${state.data.tier.rank}: ${state.data.tier.label}` : ""}
+                {target.kind === "pair"
+                  ? "Two tickets compared"
+                  : `Possible duplicate${loaded?.kind === "possible_duplicate" ? ` · priority ${loaded.data.tier.rank}: ${loaded.data.tier.label}` : ""}`}
               </p>
-              <h2 id="drawer-title">{target.displayId}</h2>
-              {first ? (
+              <h2 id="drawer-title">
+                {target.kind === "pair" ? `Excel rows ${target.rows[0]} and ${target.rows[1]}` : target.displayId}
+              </h2>
+              {who ? (
                 <p className="muted">
-                  {first.employee ?? "No employee"} · Date {first.date ?? "not usable"} · Snapshot{" "}
-                  <code className="fingerprint">{target.fingerprint.slice(0, 12)}</code>
+                  {who} · Snapshot <code className="fingerprint">{target.fingerprint.slice(0, 12)}</code>
                 </p>
               ) : null}
             </div>
@@ -435,11 +510,14 @@ export function EvidenceDrawer({ target, filters, onClose, onReviewChange }: Evi
             {state.kind === "loading" ? <p className="status">Loading the evidence…</p> : null}
             {state.kind === "failed" ? (
               <p className="notice notice-error" role="alert">
-                The evidence could not be loaded: {state.message}. Close the drawer and open the possible duplicate
-                again; if it still fails, reload the page.
+                The evidence could not be loaded: {state.message}.{" "}
+                {target.kind === "pair"
+                  ? "Check both Excel rows and compare again; if it still fails, reload the page."
+                  : "Close the drawer and open the possible duplicate again; if it still fails, reload the page."}
               </p>
             ) : null}
-            {state.kind === "ready" ? <Evidence data={state.data} onReviewChange={reviewChanged} /> : null}
+            {loaded?.kind === "possible_duplicate" ? <Evidence data={loaded.data} onReviewChange={reviewChanged} /> : null}
+            {loaded?.kind === "pair" ? <PairEvidence data={loaded.data} /> : null}
           </div>
         </>
       ) : null}

@@ -34,6 +34,54 @@ def evidence(
     `tickets` its members' fetched Tickets in member order, and `parses` their
     Time parse results by Excel row.
     """
+    shown = _shown(possible_duplicate["members"], tickets, parses, annotations)
+    return {
+        "display_id": possible_duplicate["display_id"],
+        "tier": possible_duplicate["tier"],
+        "exact_repeat_not_flagged": possible_duplicate["exact_repeat_not_flagged"],
+        "rule_ids": possible_duplicate["rule_ids"],
+        "pattern_labels": possible_duplicate["pattern_labels"],
+        "reason": possible_duplicate["summary"],
+        "candidates": [_candidate(candidate, parses) for candidate in possible_duplicate["candidates"]],
+        "status_breakdown": _status_breakdown(shown["members"]),
+        **shown,
+    }
+
+
+def pair_explanation(
+    explanation: dict[str, Any],
+    members: list[dict[str, Any]],
+    tickets: list[dict[str, Any]],
+    parses: dict[int, TimeParse],
+    display_ids: dict[int, str],
+    annotations: Annotations,
+) -> dict[str, Any]:
+    """Why two Tickets are or are not linked, with the same evidence the drawer shows for a possible duplicate.
+
+    `explanation` is the rules' verdicts and summary, `members` and `tickets`
+    the two Tickets in Excel-row order, and `display_ids` the possible
+    duplicate each Ticket is in, if any. Nothing here says one Ticket repeats
+    or outranks the other unless a rule linked them.
+    """
+    first, second = (member["excel_row"] for member in members)
+    shown = _shown(
+        [{**member, "possible_duplicate": display_ids.get(member["excel_row"])} for member in members],
+        tickets, parses, annotations,
+    )
+    together = display_ids.get(first)
+    return {
+        "excel_rows": [first, second],
+        **explanation,
+        "time_comparison": compare(parses[first], parses[second]),
+        "possible_duplicate": together if together is not None and together == display_ids.get(second) else None,
+        **shown,
+    }
+
+
+def _shown(
+    members: list[dict[str, Any]], tickets: list[dict[str, Any]], parses: dict[int, TimeParse], annotations: Annotations
+) -> dict[str, Any]:
+    """The evidence shown for any set of Tickets: members with provenance and Time, timeline, source table, Annotations."""
     members = [
         {
             **member,
@@ -46,18 +94,10 @@ def evidence(
             "issues": ticket["issues"],
             "time_parse": parses[member["excel_row"]].payload(),
         }
-        for member, ticket in zip(possible_duplicate["members"], tickets)
+        for member, ticket in zip(members, tickets)
     ]
     fields = _transposed(tickets)
     return {
-        "display_id": possible_duplicate["display_id"],
-        "tier": possible_duplicate["tier"],
-        "exact_repeat_not_flagged": possible_duplicate["exact_repeat_not_flagged"],
-        "rule_ids": possible_duplicate["rule_ids"],
-        "pattern_labels": possible_duplicate["pattern_labels"],
-        "reason": possible_duplicate["summary"],
-        "candidates": [_candidate(candidate, parses) for candidate in possible_duplicate["candidates"]],
-        "status_breakdown": _status_breakdown(members),
         "members": members,
         "timeline": _timeline(members, tickets),
         "fields": fields,

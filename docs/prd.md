@@ -134,7 +134,7 @@ Other rules will produce additional, less certain candidates.
 The flagged tile counts tickets; the exact-repeat tile counts possible duplicates and shows its ticket count explicitly.
 These tiles overlap conceptually and are not intended to sum to the population.
 
-**Priority ordering:** unflagged exact repeats where all members are Approved/Keyed first, an Approved ticket beside a Pending or not-Keyed one next, then pending conflicts and flagged duplicates with unresolved counterparts, then possible duplicates holding a Rejected ticket or an unreadable status.
+**Priority ordering:** unflagged exact repeats where all members are Approved/Keyed first, an Approved ticket beside a Pending or not-Keyed one (or Approved/Keyed tickets linked by a rule weaker than an exact repeat) next, then pending conflicts and flagged duplicates with unresolved counterparts, then possible duplicates holding a Rejected ticket or an unreadable status.
 Within a tier sort by oldest Created timestamp; ties break on the lowest Ticket Number.
 This is review priority, not a probability of wrongdoing.
 Do not rank employees or supervisors by suspected fraud.
@@ -247,10 +247,10 @@ Rules may share records and must expose their individual reasons.
 | Rule | Minimum condition and output |
 |---|---|
 | Strict repeat | The complete strict key above matches; return an equality group, subject to source-state filters |
-| Time-text variant | Same normalized employee, Date, Job Number, and four claim components; Time differs as text but parses to identical unambiguous interval sets, or differs only in spacing/case/punctuation around an otherwise identical time token sequence; disclose which condition matched |
+| Time-text variant | Same normalized employee, Date, Job Number, and four claim components; Time differs as text but parses to identical unambiguous interval sets, or differs only in spacing/case/punctuation around an otherwise identical time token sequence (runs of digits and of letters); disclose which condition matched |
 | Name-space variant | Names match after removing whitespace and case-folding, and Date, Job Number, normalized Time, and four claim components match; propose an alias relationship but do not merge employee keys |
 | Work-period conflict | Same normalized employee or confirmed alias and same Date, with a positive intersection of confidently parsed interval sets; allow different jobs and claim components |
-| Ambiguous-period comparison | Same employee, Date, and nonzero job, with matching four claim components and distinct unresolved Time strings; surface for time review without claiming overlap until the interpretation is confirmed |
+| Ambiguous-period comparison | Same employee, Date, and nonzero job, with matching four claim components and distinct unresolved Time strings (the comparison rests on a Plausible Reading); surface for time review without claiming overlap until the interpretation is confirmed |
 | Flagged-duplicate counterpart | At least one record is a flagged duplicate; same employee or confirmed alias and Date, plus either the same complete claim-component vector, identical confidently parsed periods, or identical nonempty unresolved Time text and identical nonempty description after basic case/whitespace normalization; the last path is an uncertain counterpart comparison, as in K; ignore current job equality and return all plausible counterparts, not an automatically selected original |
 | Repeated component | Same employee or confirmed alias, same Date, equal positive Job Work Pay, and either the same nonzero job or at least one Job 0; label a low-confidence component comparison, not a duplicate entitlement |
 | Description-date exception | An explicit service-date reference in description differs from Date; preserve the extracted text span and interpretation, flag an omitted year as uncertain, and do not create a duplicate edge solely from this exception |
