@@ -484,6 +484,9 @@ Known Job Work Pay on those records remains included in the known-component tota
 Do not substitute a zero rate, infer a rate from another person, or sum flagged and unflagged scenarios as total savings.
 Do not calculate general overlap-case excess without identifying retained entitlements and repeated components.
 
+Each figure is a registry metric (decision-log entries 60-62): `known_base_value_bbd`, `flagged_duplicate_base_value_bbd` and `unflagged_exact_repeat_extra_claim_bbd`, which values n − 1 claims of each exact repeat, not flagged, as its per-ticket values less the highest.
+When a reviewer has linked replaced and kept tickets, `reviewed_known_base_value_bbd` is offered beside them as a labelled analyst-reviewed alternative.
+
 ## 10. Consequential questions for Oliver
 
 The product can be implemented using qualified labels before these are resolved.

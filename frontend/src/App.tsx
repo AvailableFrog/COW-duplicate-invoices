@@ -8,6 +8,7 @@ import {
   fetchProcessingQueue,
   fetchReviewPriorities,
   fetchTiles,
+  fetchValueContext,
   NO_FILTERS,
   reimportWorkbook,
   type FilterOptions,
@@ -17,6 +18,7 @@ import {
   type ProcessingQueueResponse,
   type ReviewPrioritiesResponse,
   type TilesResponse,
+  type ValueContextResponse,
 } from "./api";
 import { CompareTickets, type OpenPair } from "./CompareTickets";
 import { EvidenceDrawer, type DrawerTarget } from "./EvidenceDrawer";
@@ -26,6 +28,7 @@ import { HeaderTiles } from "./HeaderTiles";
 import { ProcessingQueue, type OpenQueueTicket } from "./ProcessingQueue";
 import { ReviewPriorities, type OpenEvidence } from "./ReviewPriorities";
 import { SnapshotHeaderBar } from "./SnapshotHeaderBar";
+import { ValueContext } from "./ValueContext";
 
 type Tab = "overview" | "explore";
 
@@ -49,10 +52,12 @@ export function App() {
   const [flaggedError, setFlaggedError] = useState("");
   const [queue, setQueue] = useState<ProcessingQueueResponse | null>(null);
   const [queueError, setQueueError] = useState("");
+  const [value, setValue] = useState<ValueContextResponse | null>(null);
+  const [valueError, setValueError] = useState("");
   // Bumped whenever the Snapshot or as-of date changes, so every view refetches its numbers.
   const [generation, setGeneration] = useState(0);
-  // Bumped after a review save so the ranked list shows the outcomes and the tiers a settled counterpart moves;
-  // review never changes the other numbers.
+  // Bumped after a review save so the ranked list shows the outcomes and the tiers a settled counterpart moves, and
+  // the value panel offers or withdraws its analyst-reviewed alternative; review never changes the other numbers.
   const [reviewGeneration, setReviewGeneration] = useState(0);
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
   const drawerOpener = useRef<HTMLElement | null>(null);
@@ -218,6 +223,20 @@ export function App() {
     return () => controller.abort();
   }, [filters, generation]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchValueContext(filters, controller.signal)
+      .then((data) => {
+        setValue(data);
+        setValueError("");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setValueError(error instanceof Error ? error.message : String(error));
+      });
+    return () => controller.abort();
+  }, [filters, generation, reviewGeneration]);
+
   return (
     <div className="app">
       <header className="masthead">
@@ -302,6 +321,15 @@ export function App() {
             )}
             {state.kind === "ready" ? <CompareTickets rowCount={state.header.snapshot.row_count} onCompare={openPair} /> : null}
             <p className="placeholder">The data readiness view arrives with a later ticket.</p>
+            {valueError ? (
+              <p className="notice notice-error" role="alert">
+                The value context could not be loaded: {valueError}. Change the filters or reload the page.
+              </p>
+            ) : value ? (
+              <ValueContext data={value} />
+            ) : (
+              <p className="status">Loading the value context…</p>
+            )}
           </section>
         ) : (
           <section aria-labelledby="explore-heading">
