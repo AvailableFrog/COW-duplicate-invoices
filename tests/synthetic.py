@@ -25,6 +25,13 @@ FIELDS = [
 ]
 
 
+class Literal(str):
+    """Text written as a plain string cell even when it begins with "=", as typed text in an export is stored.
+
+    openpyxl otherwise writes such a value as a formula; a Literal never is.
+    """
+
+
 def ticket(number: int = 1, **overrides: Any) -> dict[str, Any]:
     """One valid Ticket; pass field values by name with spaces as underscores."""
     values: dict[str, Any] = {
@@ -72,7 +79,11 @@ def write_workbook(
     sheet.title = sheet_title
     sheet.append(fields)
     for values in tickets:
-        sheet.append([None] * len(fields) if values is None else [values.get(name) for name in fields])
+        row = [None] * len(fields) if values is None else [values.get(name) for name in fields]
+        sheet.append(row)
+        for column, value in enumerate(row, start=1):
+            if isinstance(value, Literal):
+                sheet.cell(row=sheet.max_row, column=column).data_type = "s"
     book.save(path)
     return path
 

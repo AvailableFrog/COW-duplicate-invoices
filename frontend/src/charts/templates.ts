@@ -156,7 +156,7 @@ export function assertTrusted(spec: unknown, path = "spec"): void {
 }
 
 /** The service's chart templates (chart_templates.py): an Explore result names one of these in `usermeta`. */
-export const SERVICE_TEMPLATES = ["bar_horizontal", "bar_vertical"] as const;
+export const SERVICE_TEMPLATES = ["bar_horizontal", "bar_vertical", "line", "histogram", "scatter"] as const;
 export type ServiceTemplateId = (typeof SERVICE_TEMPLATES)[number];
 
 /**

@@ -56,14 +56,19 @@ export async function boot(workbook: string): Promise<RunningApp> {
  * Write a minimal same-schema workbook with tests/synthetic.py, for shapes the
  * committed export lacks. Each ticket is a number plus field overrides by name.
  */
-export function writeWorkbook(path: string, tickets: { number: number; fields: Record<string, string | number> }[]): string {
+export function writeWorkbook(
+  path: string,
+  tickets: { number: number; fields: Record<string, string | number | { literal: string }> }[],
+): string {
+  // `{ literal: "=..." }` writes text that begins with "=" as text rather than as a formula.
   const script = [
     "import json, sys",
     "from pathlib import Path",
     "sys.path.insert(0, 'tests')",
-    "from synthetic import ticket, write_workbook",
+    "from synthetic import Literal, ticket, write_workbook",
     "spec = json.load(sys.stdin)",
-    "rows = [ticket(t['number'], **{k.replace(' ', '_'): v for k, v in t['fields'].items()}) for t in spec['tickets']]",
+    "value = lambda v: Literal(v['literal']) if isinstance(v, dict) else v",
+    "rows = [ticket(t['number'], **{k.replace(' ', '_'): value(v) for k, v in t['fields'].items()}) for t in spec['tickets']]",
     "write_workbook(Path(spec['path']), rows)",
   ].join("\n");
   mkdirSync(dirname(path), { recursive: true });

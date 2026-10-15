@@ -550,21 +550,68 @@ class SnapshotStore:
         group_by: str | None,
         replaced_rows: list[int] | tuple[int, ...] = (),
         window: tuple[dt.date, dt.date] | None = None,
-    ) -> dict[str, Any]:
-        """An Explore plan's metric, with its source rows, evaluated by the registry inside a read-only transaction.
+        time_basis: str | None = None,
+        paired_metric: metrics.Metric | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """An Explore plan's metric (and a scatterplot's paired metric), with source rows and each Ticket's value,
+        evaluated by the registry inside one read-only transaction.
 
         The plan's values reach the registry's SQL only as parameters; the
         transaction makes any attempt to write fail rather than succeed.
         """
         with self._lock:
+            fields = self.fields(fingerprint)
             self.connection.execute("BEGIN TRANSACTION READ ONLY")
             try:
-                return metrics.evaluate(
-                    self.connection, fingerprint, self.fields(fingerprint), metric, filters, as_of, group_by,
-                    include_rows=True, replaced_rows=replaced_rows, window=window,
+                evaluated = metrics.evaluate(
+                    self.connection, fingerprint, fields, metric, filters, as_of, group_by,
+                    include_rows=True, replaced_rows=replaced_rows, window=window, time_basis=time_basis,
+                    include_values=True,
                 )
+                paired = None if paired_metric is None else metrics.evaluate(
+                    self.connection, fingerprint, fields, paired_metric, filters, as_of,
+                    include_rows=True, replaced_rows=replaced_rows, window=window, include_values=True,
+                )
+                return evaluated, paired
             finally:
                 self.connection.execute("ROLLBACK")
+
+    def ticket_details(self, fingerprint: str, excel_rows: Iterable[int]) -> dict[int, dict[str, Any]]:
+        """The given Tickets' fields as a drilldown lists them, by Excel row; the description is its raw cell value."""
+        rows = list(excel_rows)
+        if not rows:
+            return {}
+        with self._lock:
+            found = self.connection.execute(
+                """SELECT t.excel_row, t.ticket_number, t.employee_name, t.work_date, t.created, t.date_approved,
+                    t.status, t.keyed, t.job_number, t.job_name, t.supervisor, t.occupation,
+                    c.field, c.position, c.raw_type, c.value_text, c.value_integer, c.value_number, c.value_boolean,
+                    c.value_timestamp, c.number_format
+                FROM ticket_values t
+                LEFT JOIN cells c ON c.snapshot_fingerprint = t.snapshot_fingerprint AND c.excel_row = t.excel_row
+                    AND c.field = 'Description of Job Work'
+                WHERE t.snapshot_fingerprint = ? AND list_contains(?, t.excel_row)""",
+                [fingerprint, rows],
+            ).fetchall()
+        details = {}
+        for row in found:
+            description = _cell_payload(row[12:])["value"] if row[12] is not None else None
+            details[row[0]] = {
+                "excel_row": row[0],
+                "ticket_number": row[1],
+                "employee": row[2],
+                "date": _iso(row[3].date()) if row[3] is not None else None,
+                "created": _iso(row[4]),
+                "date_approved": _iso(row[5]),
+                "status": row[6],
+                "keyed": row[7],
+                "job_number": row[8],
+                "job_name": row[9],
+                "supervisor": row[10],
+                "occupation": row[11],
+                "description": description,
+            }
+        return details
 
     def field_values(self, fingerprint: str) -> dict[str, list[dict[str, Any]]]:
         """Each groupable Ticket field's recorded values with their ticket counts, for the Explore chips.

@@ -1065,10 +1065,12 @@ export function saveAlias(
 
 // Explore: the typed query plan (PRD section 7), its catalogue and its executed result.
 
-export type ChartTemplateId = "bar_horizontal" | "bar_vertical";
+export type ChartTemplateId = "bar_horizontal" | "bar_vertical" | "line" | "histogram" | "scatter" | "table";
 export type PlanSort = "metric_desc" | "metric_asc" | "label_asc";
 export type PlanOperator = "eq" | "ne" | "in" | "not_in";
 export type FieldValue = string | number | boolean;
+/** What a plan draws: one total, categories, ordered periods, a distribution or a pair of values per ticket. */
+export type PlanForm = "total" | "categories" | "dates" | "distribution" | "pair";
 
 export interface PlanFilter {
   field: string;
@@ -1076,13 +1078,16 @@ export interface PlanFilter {
   value: FieldValue | FieldValue[];
 }
 
+/** A fixed range on the date basis, or a relative one resolved against the as-of date. */
+export type PlanDateRange = { from: string | null; to: string | null } | { relative: string };
+
 /** The plan the chips compile to; every field is required, so nothing is assumed. */
 export interface Plan {
   metric_id: string;
   group_by: string[];
   filters: PlanFilter[];
   date_basis: DateBasis;
-  date_range: { from: string | null; to: string | null } | null;
+  date_range: PlanDateRange | null;
   chart: ChartTemplateId;
   sort: PlanSort;
   limit: number;
@@ -1096,6 +1101,8 @@ export interface ExploreMetric {
   unit: string;
   statistic: string;
   allowed_dimensions: string[];
+  /** A distribution of one value per ticket: drawn as a histogram, never grouped. */
+  distribution: boolean;
   availability: { status: string; reason: string | null };
 }
 
@@ -1118,10 +1125,14 @@ export interface StarterPlan {
 export interface ExploreCatalogue extends Provenance {
   metrics: ExploreMetric[];
   fields: ExploreField[];
+  time_groupings: { id: string; label: string; nouns: [string, string] }[];
   operators: { id: PlanOperator; label: string }[];
   date_bases: { id: DateBasis; label: string; available: boolean }[];
-  charts: { id: ChartTemplateId; label: string }[];
+  relative_ranges: { id: string; label: string }[];
+  charts: { id: ChartTemplateId; label: string; forms: PlanForm[] }[];
+  scatter_pairs: { metric_id: string; paired_metric_id: string; label: string }[];
   sorts: { id: PlanSort; label: string }[];
+  ordered_sort: PlanSort;
   limits: { min: number; max: number; default: number };
   max_filters: number;
   starters: StarterPlan[];
@@ -1144,6 +1155,8 @@ export interface PlanGroup {
   excel_rows: number[];
   shown: boolean;
   in_other: boolean;
+  /** A histogram bin's half-open range [min, max). */
+  bin?: { min: number; max: number };
 }
 
 export interface PlanBar {
@@ -1159,26 +1172,81 @@ export interface InheritedFilters {
   filters: FilterPayload | null;
 }
 
+/** The absolute range a plan ran under; a relative one names the as-of date it resolved against. */
+export interface ResolvedDateRange {
+  source: "relative" | "plan" | "overview";
+  relative: string | null;
+  label: string;
+  from: string | null;
+  to: string | null;
+  as_of: string | null;
+  date_basis: DateBasis;
+  date_basis_label: string;
+}
+
+export interface MetricSummary {
+  id: string;
+  label: string;
+  definition: string;
+  unit: string;
+  statistic: string;
+}
+
+export interface HowCalculated {
+  formula: string;
+  statistic: string;
+  definition: string;
+  null_treatment: string;
+  exclusion_rules: string[];
+  exclusions: (CoverageItem & { partial: boolean; quantity?: number | null; quantity_unit?: string | null })[];
+  filters: string;
+  starting_filters: string;
+  date_range: ResolvedDateRange | null;
+  presentation: string;
+  source_rows: { tickets: number; excel_rows: number[] };
+  lineage: string;
+  plan: Plan;
+  inherited_filters: InheritedFilters;
+  template: ChartTemplateId;
+}
+
+export interface CacheAnswer {
+  status: "hit" | "miss";
+  key: string;
+  snapshot_fingerprint: string;
+  as_of: string;
+  registry_version: string;
+  review_revision: number;
+}
+
 export interface PlanResult extends Provenance {
   plan: Plan;
   inherited_filters: InheritedFilters;
   filters: FilterPayload & { conditions: { field: string; operator: PlanOperator; value: unknown; description: string }[] };
-  metric: { id: string; label: string; definition: string; unit: string; statistic: string };
+  date_range: ResolvedDateRange | null;
+  metric: MetricSummary;
+  paired_metric: MetricSummary | null;
   availability: { status: string; reason: string | null };
   title: string;
   summary: string;
   grain: string;
+  presentation: "chart" | "table";
   result: {
+    form: PlanForm;
     total: number | null;
     contributing_tickets: number;
     unit: string;
     value_title: string;
     empty: boolean;
+    empty_message: string | null;
     groups: PlanGroup[];
     bars: PlanBar[];
     other: (PlanBar & { contributing_tickets: number; groups: number; excel_rows: number[] }) | null;
     hidden_groups: number;
     percentage: Percentage | null;
+    summary: DistributionSummary | null;
+    points: { excel_row: number; x: number; y: number }[] | null;
+    bin_width: number | null;
   };
   /** A trusted template's Vega-Lite specification with inline data; null when nothing is drawn. */
   chart: { template: ChartTemplateId; spec: Record<string, unknown> } | null;
@@ -1186,6 +1254,45 @@ export interface PlanResult extends Provenance {
   coverage: { contributing_tickets: number; excluded: CoverageItem[]; partial: CoverageItem[] } | null;
   warnings: string[];
   notes: string[];
+  how_calculated: HowCalculated;
+  cache: CacheAnswer;
+}
+
+export interface DrilldownRow {
+  excel_row: number;
+  ticket_number: string | null;
+  employee: string | null;
+  date: string | null;
+  created: string | null;
+  date_approved: string | null;
+  status: string | null;
+  keyed: boolean | null;
+  job_number: number | null;
+  job_name: string | null;
+  supervisor: string | null;
+  occupation: string | null;
+  /** The Description of Job Work cell's raw value, exactly as recorded. */
+  description: unknown;
+  value: number | null;
+  paired_value?: number | null;
+}
+
+export interface DrilldownResult extends Provenance {
+  plan: Plan;
+  filters: FilterPayload;
+  date_range: ResolvedDateRange | null;
+  metric: MetricSummary;
+  title: string;
+  group: { id: string; label: string; value: number; contributing_tickets: number } | null;
+  label: string;
+  tickets: number;
+  total: number | null;
+  chart_total: number | null;
+  reproduces: boolean;
+  value_title: string | null;
+  paired_value_title: string | null;
+  rows: DrilldownRow[];
+  cache: CacheAnswer;
 }
 
 /** A plan the service refused: every issue, each naming the plan field at fault. */
@@ -1223,20 +1330,22 @@ export function inheritedFilters(filters: FilterState) {
   };
 }
 
-/** Run a plan against the Snapshot the screen shows; a different active Snapshot is refused as stale. */
-export async function executePlan(
-  plan: Plan,
-  inherited: FilterState | null,
-  snapshotFingerprint: string,
-  signal?: AbortSignal,
-): Promise<PlanResult> {
-  const response = await fetch("/api/plans/execute", {
+/** What every plan request sends: the plan, the inherited filters beside it and the Snapshot it is shown for. */
+export interface PlanRequest {
+  plan: Plan;
+  inherited: FilterState | null;
+  snapshotFingerprint: string;
+}
+
+async function postPlan(path: string, request: PlanRequest, extra: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      plan,
-      inherited: inherited === null ? null : inheritedFilters(inherited),
-      snapshot_fingerprint: snapshotFingerprint,
+      plan: request.plan,
+      inherited: request.inherited === null ? null : inheritedFilters(request.inherited),
+      snapshot_fingerprint: request.snapshotFingerprint,
+      ...extra,
     }),
     signal,
   });
@@ -1249,5 +1358,39 @@ export async function executePlan(
     throw new PlanRejected(message, body.detail?.errors ?? []);
   }
   if (!response.ok) throw await failure(response);
+  return response;
+}
+
+/** Run a plan against the Snapshot the screen shows; a different active Snapshot is refused as stale. */
+export async function executePlan(
+  plan: Plan,
+  inherited: FilterState | null,
+  snapshotFingerprint: string,
+  signal?: AbortSignal,
+): Promise<PlanResult> {
+  const response = await postPlan("/api/plans/execute", { plan, inherited, snapshotFingerprint }, {}, signal);
   return (await response.json()) as PlanResult;
+}
+
+/** The tickets behind the whole chart (`group` null) or one of its marks, from the same evaluation. */
+export async function fetchDrilldown(request: PlanRequest, group: string | null, signal?: AbortSignal): Promise<DrilldownResult> {
+  const response = await postPlan("/api/plans/drilldown", request, { group }, signal);
+  return (await response.json()) as DrilldownResult;
+}
+
+/** Download the result table or a drilldown as CSV; formula-like cells are protected in the file only. */
+export async function downloadCsv(kind: "table" | "drilldown", request: PlanRequest, group: string | null = null): Promise<string> {
+  const path = kind === "table" ? "/api/plans/table.csv" : "/api/plans/drilldown.csv";
+  const response = await postPlan(path, request, kind === "drilldown" ? { group } : {});
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `explore-${kind}.csv`;
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return filename;
 }

@@ -8,17 +8,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
-from labour_ticket_analytics import data_readiness, flagged, pattern_matrix, plans, processing_queue, value_context
+from labour_ticket_analytics import (
+    data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, value_context,
+)
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, Metric, MetricError, registry_payload
 from labour_ticket_analytics.normalized import normalize_label
 from labour_ticket_analytics.providers import NullProvider, PlanProvider
+from labour_ticket_analytics.result_cache import ResultCache
 from labour_ticket_analytics.review import (
     ALIAS_DECISION_VALUES, ReviewError, ReviewStore, outcome_label, pair_key, proposing_rows,
 )
@@ -83,6 +86,9 @@ class AppState:
     frontend_dist: Path = FRONTEND_DIST
     # What turns a question into a plan; release one has no model (ADR 0001).
     provider: PlanProvider = field(default_factory=NullProvider)
+    # Executed Explore plans, reused for identical requests within one Snapshot, as-of date, set of versions
+    # and review revision, and discarded when any of them changes.
+    results: ResultCache = field(default_factory=ResultCache)
     import_lock: threading.Lock = field(default_factory=threading.Lock)
     # Held while an Alias decision is saved and the rules run again, so the stored Candidates always
     # reflect the latest decisions.
@@ -392,7 +398,7 @@ def create_app(state: AppState) -> FastAPI:
             issues.extend(error.issues)
         if issues:
             raise plans.PlanError(issues)
-        return plan, inheritance, plans.compile_filters(plan, inheritance, fields)
+        return plan, inheritance, plans.compile_filters(plan, inheritance, fields, state.as_of)
 
     @app.get("/api/explore")
     def explore_catalogue() -> dict:
@@ -418,18 +424,12 @@ def create_app(state: AppState) -> FastAPI:
             "errors": [],
             "inherited_filters": inheritance.payload(),
             "filters": filters.payload(),
+            "date_range": plans.date_range_payload(plan, filters, state.as_of),
             **context(fingerprint),
         }
 
-    @app.post("/api/plans/execute")
-    def execute_plan(body: dict = Body(...)) -> dict:
-        """A valid plan's values, bars, table, lineage and chart, with the Snapshot, as-of date and versions beside it.
-
-        A request naming the Snapshot its result is shown for is refused (409)
-        once another Snapshot is active, so a displayed result is invalidated
-        until it is run again.
-        """
-        fingerprint = state.active_fingerprint
+    def require_shown_snapshot(body: dict, fingerprint: str) -> None:
+        """Refuse (409) a request naming the Snapshot its result is shown for once another Snapshot is active."""
         shown_for = body.get("snapshot_fingerprint")
         if shown_for is not None and shown_for != fingerprint:
             raise HTTPException(
@@ -442,22 +442,119 @@ def create_app(state: AppState) -> FastAPI:
                     "active_snapshot_fingerprint": fingerprint,
                 },
             )
+
+    def run_plan(fingerprint: str, plan: plans.Plan, inheritance: plans.Inherited, filters: Filters) -> plans.Executed:
+        metric = plan.metric
+        replaced_rows = state.review.replaced_rows(fingerprint) if metric.reads_review_links else ()
+        # The default reporting window: read by window metrics, and where a weekly or monthly series ends.
+        window = window_bounds(reporting_window(fingerprint, None, None))
+        try:
+            evaluated, paired = state.store.evaluate_plan(
+                fingerprint, metric, filters, state.as_of, plan.dimension, replaced_rows=replaced_rows, window=window,
+                time_basis=plan.date_basis if plan.time_grouping else None, paired_metric=plan.paired_metric,
+            )
+        except MetricError as error:
+            raise metric_failure(error) from error
+        job_names = state.store.job_names(fingerprint) if plan.dimension == "Job Number" else {}
+        return plans.result(plan, inheritance, filters, evaluated, job_names, state.as_of, window, paired)
+
+    def executed_plan(body: dict) -> tuple[str, plans.Executed, dict]:
+        """The request's plan run (or reused from the cache) against the active Snapshot, with the cache's answer.
+
+        The cache key is the validated plan with its inherited and compiled
+        filters; its scope is the Snapshot, as-of date, versions and review
+        revision, so a change to any of them discards every cached result.
+        """
+        fingerprint = state.active_fingerprint
+        require_shown_snapshot(body, fingerprint)
         try:
             plan, inheritance, filters = compiled_plan(fingerprint, body)
         except plans.PlanError as error:
             raise HTTPException(status_code=422, detail=error.payload()) from error
-        metric = plan.metric
-        options: dict = {}
-        if metric.reads_review_links:
-            options["replaced_rows"] = state.review.replaced_rows(fingerprint)
-        if metric.reads_reporting_window:
-            options["window"] = window_bounds(reporting_window(fingerprint, None, None))
+        revision = state.review.revision
+        current = versions()
+        scope = (fingerprint, state.as_of.isoformat(), tuple(sorted(current.items())), revision)
+        key = state.results.key(
+            {"plan": plan.payload(), "inherited": inheritance.payload(), "filters": filters.payload()},
+        )
+        executed, hit = state.results.get_or_compute(
+            scope, key, lambda: run_plan(fingerprint, plan, inheritance, filters),
+        )
+        cache = {
+            "status": "hit" if hit else "miss",
+            "key": key[:16],
+            "snapshot_fingerprint": fingerprint,
+            "as_of": state.as_of.isoformat(),
+            "registry_version": current["registry"],
+            "review_revision": revision,
+        }
+        return fingerprint, executed, cache
+
+    @app.post("/api/plans/execute")
+    def execute_plan(body: dict = Body(...)) -> dict:
+        """A valid plan's values, marks, table, lineage, How calculated and chart, with the Snapshot, as-of date and
+        versions beside it, and whether the result came from the cache.
+
+        A request naming the Snapshot its result is shown for is refused (409)
+        once another Snapshot is active, so a displayed result is invalidated
+        until it is run again.
+        """
+        fingerprint, executed, cache = executed_plan(body)
+        return {**executed.payload, "cache": cache, **context(fingerprint)}
+
+    def listing(body: dict) -> tuple[str, plans.Executed, dict, dict]:
+        """The drilldown the request asks for: the whole chart (`group` null) or one of its marks by id."""
+        fingerprint, executed, cache = executed_plan(body)
+        group_id = body.get("group")
+        if group_id is not None and not isinstance(group_id, str):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_group", "field": "group", "message": "group must be a group id or null"},
+            )
         try:
-            evaluated = state.store.evaluate_plan(fingerprint, metric, filters, state.as_of, plan.dimension, **options)
-        except MetricError as error:
-            raise metric_failure(error) from error
-        job_names = state.store.job_names(fingerprint) if plan.dimension == "Job Number" else {}
-        return {**plans.result(plan, inheritance, filters, evaluated, job_names), **context(fingerprint)}
+            _, rows, _ = plans.drilldown_selection(executed, group_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "unknown_group",
+                    "field": "group",
+                    "message": f"the result has no group {group_id!r}; use a group id from its table, or null for "
+                    "every ticket in the chart",
+                },
+            ) from error
+        details = state.store.ticket_details(fingerprint, rows)
+        return fingerprint, executed, cache, plans.drilldown(executed, group_id, details)
+
+    @app.post("/api/plans/drilldown")
+    def drilldown_plan(body: dict = Body(...)) -> dict:
+        """Exactly the Tickets behind a chart or one of its marks, from the same evaluation, under the same Snapshot,
+        filters, as-of date and versions; `reproduces` says the listing gives back the chart's figure."""
+        fingerprint, _, cache, listed = listing(body)
+        return {**listed, "cache": cache, **context(fingerprint)}
+
+    def csv_response(fingerprint: str, name: str, header: list[str], rows: list[list]) -> Response:
+        provenance = (fingerprint, state.as_of.isoformat(), versions()["registry"])
+        filename = f"explore-{name}-{fingerprint[:12]}-as-of-{state.as_of.isoformat()}.csv"
+        return Response(
+            content=exports.csv_text(header, rows, provenance),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.post("/api/plans/table.csv")
+    def export_table(body: dict = Body(...)) -> Response:
+        """The result table as CSV, with formula-like cells protected; the API keeps the raw values."""
+        fingerprint, executed, _ = executed_plan(body)
+        header, rows = exports.table_rows(executed)
+        return csv_response(fingerprint, "table", header, rows)
+
+    @app.post("/api/plans/drilldown.csv")
+    def export_drilldown(body: dict = Body(...)) -> Response:
+        """A drilldown as CSV, with formula-like cells protected; the API keeps the raw values."""
+        fingerprint, _, _, listed = listing(body)
+        header, rows = exports.drilldown_csv_rows(listed)
+        return csv_response(fingerprint, "source-rows", header, rows)
 
     @app.post("/api/plans/propose")
     def propose_plan(body: dict = Body(...)) -> dict:

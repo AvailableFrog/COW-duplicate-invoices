@@ -94,10 +94,14 @@ def test_candidate_tickets_union_the_tickets_of_every_candidate(app):
 def test_negative_submission_lag_is_a_separate_exception_not_discarded_silently(app):
     body = app.get("/api/metrics/submission_lag_days").json()
 
-    negative = {item["code"]: item for item in body["coverage"]["excluded"]}["negative_lag"]
+    excluded = {item["code"]: item for item in body["coverage"]["excluded"]}
+    negative, anomalous = excluded["negative_lag"], excluded["date_outside_reporting_window"]
     assert negative["tickets"] > 0
-    assert body["coverage"]["contributing_tickets"] + negative["tickets"] == 2836
+    # The 2036 and 2050 work dates are anomalous dates, disclosed apart from ordinary negative lag (ticket #17).
+    assert anomalous["excel_rows"] == [756, 1265, 2502]
+    assert body["coverage"]["contributing_tickets"] + negative["tickets"] + anomalous["tickets"] == 2836
     assert any("Date as recorded falls after Created" in warning for warning in body["warnings"])
+    assert body["reporting_window"]["from"] == "2026-01-01"
 
 
 def test_an_unknown_metric_or_dimension_is_a_recoverable_error(app):

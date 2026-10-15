@@ -15,6 +15,7 @@ import {
   NO_PATTERN_FILTER,
   reimportWorkbook,
   type DataReadinessResponse,
+  type DrilldownRow,
   type FilterOptions,
   type FilterState,
   type FlaggedDuplicatesResponse,
@@ -133,6 +134,11 @@ export function App() {
         ? { kind: "possible_duplicate", fingerprint, excelRow: row.excel_row, displayId: row.possible_duplicate }
         : { kind: "ticket", fingerprint, excelRow: row.excel_row, title: `Ticket row ${row.excel_row}` },
     );
+  };
+
+  const openExploreTicket = (row: DrilldownRow, fingerprint: string, opener: HTMLElement) => {
+    drawerOpener.current = opener;
+    setDrawer({ kind: "ticket", fingerprint, excelRow: row.excel_row, title: `Ticket ${row.ticket_number ?? `row ${row.excel_row}`}` });
   };
 
   const openPair: OpenPair = (rows, opener) => {
@@ -406,7 +412,12 @@ export function App() {
         {/* Kept mounted while the Overview shows, so the starting choice and chips survive a tab switch. */}
         {state.kind === "ready" ? (
           <div hidden={tab !== "explore"}>
-            <Explore header={state.header} overviewFilters={filters} />
+            <Explore
+              header={state.header}
+              overviewFilters={filters}
+              reviewGeneration={reviewGeneration}
+              onOpenTicket={openExploreTicket}
+            />
           </div>
         ) : null}
       </main>

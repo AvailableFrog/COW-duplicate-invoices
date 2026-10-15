@@ -157,7 +157,7 @@ Each percentage must expose numerator and denominator.
 | `approved_not_keyed_submission_age_days` | Same age definition for Approved/not-Keyed; do not call this time awaiting keying |
 | `claimed_hours` | Regular Hours + Overtime + Double Time, with no pay multipliers; invalid/missing components produce a coverage warning, not silent zero |
 | `employee_label_count` | Distinct normalized employee labels; verified aliases can produce a separately named person measure later |
-| `submission_lag_days` | Calendar Created date minus Date, only when both dates are usable; negative values are a separate exception, not silently discarded |
+| `submission_lag_days` | Calendar Created date minus Date, only when both dates are usable; negative values are a separate exception, not silently discarded, and a date outside the reporting window is its own exception (decision-log entry 80) |
 | `observed_approval_interval_hours` | Date Approved minus Created for Approved records with valid nonnegative timestamps; not stage duration, and never applied to Rejected records as approval time |
 | `known_base_value_bbd` | Recorded Rate × claimed hours + Job Work Pay, rounded half-up to cents per ticket; sum available components and disclose unpriced labour |
 
@@ -319,7 +319,7 @@ In release one the tab is named **Explore** and is driven entirely by the editab
 There is no prompt field, no model, and no inference cost (ADR 0001).
 Everything in this section that depends on interpreting a sentence (the prompt field, the one-sentence interpretation, follow-ups, clarification, the example-query table, and the held-out evaluation) is the release-two contract, retained here so the plan schema is designed for it from the start.
 The intended release-two provider is a local open-weights model behind the provider adapter; nothing is built for it in release one.
-Release one's plan allowlists, starter questions, top-ten-plus-Other behaviour, inherited filters and invalidation are recorded in decision-log entries 72-77.
+Release one's plan allowlists, starter questions, top-ten-plus-Other behaviour, inherited filters and invalidation are recorded in decision-log entries 72-77; drilldown, chart types, relative dates, empty results, the result cache, CSV export and the How-calculated panel in entries 78-86.
 
 ### Research-informed direction
 
