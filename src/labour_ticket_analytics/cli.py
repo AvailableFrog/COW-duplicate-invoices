@@ -20,6 +20,7 @@ from pathlib import Path
 
 import uvicorn
 
+from labour_ticket_analytics import logredact
 from labour_ticket_analytics.api import DEFAULT_AS_OF, AppState, create_app
 from labour_ticket_analytics.review import ReviewStore, ReviewStoreUnavailable
 from labour_ticket_analytics.rules import Aliases
@@ -104,6 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Local review data: {review.path.resolve()}", flush=True)
         print(f"Listening on http://{url_host}:{bound_port}", flush=True)
         config = uvicorn.Config(app, host=bound_host, port=bound_port, log_level="warning", access_log=False)
+        # Uvicorn builds its log handlers in Config; only then can exception messages be withheld from them.
+        logredact.install()
         uvicorn.Server(config).run(sockets=[sock])
     finally:
         review.close()
