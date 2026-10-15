@@ -81,7 +81,7 @@ export function PatternMatrix({
             key={state.id}
             count={counts.get(state.id) ?? 0}
             label={`${state.label} ${(counts.get(state.id) ?? 0) === 1 ? "ticket" : "tickets"}, ${name}`}
-            selection={{ patterns, sourceStates: [state.id as SourceStateId] }}
+            selection={{ patterns, sourceStates: [state.id] }}
             current={current}
             onSelect={onSelect}
           />

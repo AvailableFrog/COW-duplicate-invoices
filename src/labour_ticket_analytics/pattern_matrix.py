@@ -133,9 +133,6 @@ class PatternFilter:
         return "; ".join(parts)
 
 
-NO_PATTERN_FILTER = PatternFilter()
-
-
 @dataclass(frozen=True)
 class _Linked:
     """A possible duplicate with, for each member's Excel row, the patterns of the Candidates linking it."""
@@ -181,10 +178,7 @@ def review_priorities(possible_duplicates: list[dict[str, Any]], selection: Patt
             "active": selection.active,
             "description": selection.describe(),
             "counts": counts,
-            "totals": {
-                "possible_duplicates": len(listed),
-                "tickets": sum(1 for item in listed for member in item["members"] if member["in_selection"]),
-            },
+            "totals": _totals(linked, selection),
             "note": FILTER_NOTE,
         },
         "pattern_matrix": _matrix(linked),
