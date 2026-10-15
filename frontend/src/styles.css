@@ -81,6 +81,11 @@ body {
   font-size: 0.95rem;
 }
 
+/* Identifiers such as metric IDs have no spaces; let them wrap rather than push the page sideways. */
+code {
+  overflow-wrap: anywhere;
+}
+
 .fingerprint {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--panel);
