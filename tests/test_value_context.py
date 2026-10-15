@@ -67,6 +67,7 @@ def test_the_known_components_disclose_881_unpriced_hours_on_122_pending_tickets
     assert body["unpriced_labour"]["hours"] == 881
     assert body["unpriced_labour"]["statuses"] == [{"status": "Pending", "tickets": 122}]
     assert len(body["unpriced_labour"]["excel_rows"]) == 122
+    assert body["unpriced_labour"]["summary"].startswith("881 hours across 122 Pending tickets")
     assert "881 hours" in known["completeness"]
     assert "122 Pending tickets" in known["completeness"]
     assert "never valued at zero" in known["completeness"]

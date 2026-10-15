@@ -88,6 +88,9 @@ REVIEWED = Figure(
     ),
 )
 
+# Why labour is unpriced: the metric's `unpriced_labour` partial (metrics.LABOUR_KNOWN_SQL fails).
+UNPRICED_REASON = "that lack a usable Rate or hour value"
+
 # Approval statuses of a set of Tickets, most first, as the store counts them.
 StatusCounts = Callable[[list[int]], list[dict[str, Any]]]
 
@@ -153,12 +156,17 @@ def _unpriced(result: dict[str, Any], status_counts: StatusCounts) -> dict[str, 
     """The labour a base-value metric could not price: Tickets, hours, their statuses and rows."""
     item = _partial(result, "unpriced_labour")
     rows = list(item["excel_rows"]) if item else []
-    return {
+    unpriced = {
         "tickets": item["tickets"] if item else 0,
         "hours": item["quantity"] if item else 0,
         "statuses": status_counts(rows),
         "excel_rows": rows,
     }
+    unpriced["summary"] = (
+        f"{_quantity(unpriced['hours'])} hours across {_tickets_with_status(unpriced)} {UNPRICED_REASON}"
+        if unpriced["tickets"] else "Every ticket's labour inside these filters is priced."
+    )
+    return unpriced
 
 
 def _known_completeness(result: dict[str, Any], unpriced: dict[str, Any]) -> str:
@@ -168,8 +176,9 @@ def _known_completeness(result: dict[str, Any], unpriced: dict[str, Any]) -> str
     if unpriced["tickets"]:
         parts.append(
             f"{_tickets_with_status(unpriced)} {'claims' if unpriced['tickets'] == 1 else 'claim'} "
-            f"{_quantity(unpriced['hours'])} hours with no usable Rate, so that labour is unpriced: disclosed here, never "
-            "valued at zero, and no rate is borrowed from another person. Any Job Work Pay they record is included."
+            f"{_quantity(unpriced['hours'])} hours but {'lacks' if unpriced['tickets'] == 1 else 'lack'} a usable Rate "
+            "or hour value, so that labour is unpriced: disclosed here, never valued at zero, and no rate is borrowed "
+            "from another person. Any Job Work Pay they record is included."
         )
     else:
         parts.append("Every ticket's labour is priced.")
@@ -186,8 +195,8 @@ def _flagged_completeness(result: dict[str, Any], status_counts: StatusCounts) -
     if unpriced["tickets"]:
         parts.append(
             f"{_count(unpriced['tickets'], 'of them', 'of them')} {'has' if unpriced['tickets'] == 1 else 'have'} "
-            f"{_quantity(unpriced['hours'])} hours with no usable Rate, unpriced and never valued at zero; any Job Work "
-            "Pay they record is included."
+            f"{_quantity(unpriced['hours'])} hours lacking a usable Rate or hour value, unpriced and never valued at "
+            "zero; any Job Work Pay they record is included."
         )
     elif contributing:
         parts.append("Every one has its labour priced.")

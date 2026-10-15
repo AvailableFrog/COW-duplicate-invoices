@@ -584,6 +584,8 @@ export interface ValueContextResponse extends Provenance {
     hours: number;
     statuses: { status: ApprovalStatus | null; tickets: number }[];
     excel_rows: number[];
+    /** In words, such as "881 hours across 122 Pending tickets that lack a usable Rate or hour value". */
+    summary: string;
   };
   /** Present only when a reviewer's kept/replaced link marks a ticket replaced. */
   reviewed_alternative: ReviewedAlternative | null;

@@ -30,7 +30,7 @@ test("the value context is collapsed below the other views and opens by keyboard
     await expect(figure).toContainText("Interpretation");
     await expect(figure).toContainText("Completeness");
   }
-  await expect(panel).toContainText("881 hours across 122 Pending tickets with no Rate");
+  await expect(panel).toContainText("881 hours across 122 Pending tickets that lack a usable Rate or hour value");
   await expect(known).toContainText("122 Pending tickets claim 881 hours");
   const groups = panel.getByRole("region", { name: "Behind the hypothetical figure: each exact repeat, not flagged" });
   await expect(groups.getByRole("row")).toHaveCount(5);

@@ -1,7 +1,6 @@
 import type { ExtraClaimGroup, ValueContextResponse, ValueFigure, ValueScenario } from "./api";
 
 const money = new Intl.NumberFormat("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const numberFormat = new Intl.NumberFormat("en-GB");
 
 /** How each figure's kind reads on screen; the flagged and hypothetical scenarios are never added together. */
 const SCENARIO_LABELS: Record<ValueScenario, string> = {
@@ -13,18 +12,6 @@ const SCENARIO_LABELS: Record<ValueScenario, string> = {
 
 function bbd(value: number | null): string {
   return value === null ? "Not available" : `BBD ${money.format(value)}`;
-}
-
-function plural(count: number, one: string, many: string): string {
-  return `${numberFormat.format(count)} ${count === 1 ? one : many}`;
-}
-
-/** "122 Pending tickets", or "3 tickets (2 Pending, 1 Approved)" when the statuses are mixed. */
-function ticketsByStatus(data: ValueContextResponse["unpriced_labour"]): string {
-  const { statuses, tickets } = data;
-  if (statuses.length === 1 && statuses[0].status) return plural(tickets, `${statuses[0].status} ticket`, `${statuses[0].status} tickets`);
-  const detail = statuses.map((item) => `${numberFormat.format(item.tickets)} ${item.status ?? "unreadable status"}`).join(", ");
-  return `${plural(tickets, "ticket", "tickets")} (${detail})`;
 }
 
 /** "116.24 each" when every ticket in the group has one base value, otherwise each value in turn. */
@@ -145,12 +132,11 @@ export function ValueContext({ data }: { data: ValueContextResponse }) {
         <p className={unpriced.tickets > 0 ? "unresolved value-unpriced" : "muted value-unpriced"}>
           {unpriced.tickets > 0 ? (
             <>
-              <strong>Unpriced labour:</strong> {numberFormat.format(unpriced.hours)} hours across {ticketsByStatus(unpriced)}{" "}
-              with no Rate. That labour's value is unknown, not zero, and is left out of every figure below; any Job Work
-              Pay on those tickets is included.
+              <strong>Unpriced labour:</strong> {unpriced.summary}. That labour's value is unknown, not zero, and is left
+              out of every figure below; any Job Work Pay on those tickets is included.
             </>
           ) : (
-            "Every ticket's labour inside these filters is priced."
+            unpriced.summary
           )}
         </p>
         <div className="value-figures">
