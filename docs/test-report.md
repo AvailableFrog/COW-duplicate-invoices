@@ -121,6 +121,28 @@ Release 1.1 adds Overview panels on top of release one; each joins the acceptanc
 | Claimed hours by job (#33) | `tests/test_claimed_hours_panel.py` (scope, measures, filters, drilldowns, the reviewed alternative); `test_acceptance_drilldowns.py::test_claimed_hours_by_job_drills_down_to_every_bar_and_its_total` under the four filter states and both measures; `frontend/e2e/claimed-hours.spec.ts`; the accessibility audit, chart checks and layout checks now wait for the panel |
 | Submission and review timing (#34) | `tests/test_submission_timing_panel.py` (stacking, the caption, every segment, week and bin drilling down, the disclosures, filters, an unreadable status); `test_acceptance_drilldowns.py::test_submission_timing_drills_down_to_every_segment_week_and_bin` under the four filter states; `frontend/e2e/timing.spec.ts`; the accessibility audit, chart checks and layout checks wait for the panel |
 
+## Scale: 50,000 rows (release two, #37)
+
+`tests/generate.py` writes a same-schema workbook of any size from a seed. Every name, email and description in it is visibly synthetic. Its background tickets never share an employee and date, and one pair is planted per matching rule. `tests/test_generate.py` checks on every run that each rule links exactly its planted pair and nothing else is linked. `LTA_SCALE=1 uv run pytest -s tests/test_scale.py` measures a 50,000-row run, which is opt-in and recorded, not asserted, in `test-logs/scale-timings.json`. These are generated results, kept apart from findings about the real export.
+
+Measured on the environment above:
+
+| Measure | Result | Target |
+|---|---|---|
+| Import, launch to listening | 41.3 s (90.8 s before this ticket's fix) | under 30 s |
+| The Overview's nine first requests | 3.35 s | |
+| Tiles under a status, job or Created filter, median | 0.16-0.17 s | under 2 s |
+| Review priorities, a pattern-matrix cell, claimed hours by job, submission timing, median | 0.02-0.08 s | under 2 s |
+| Explore plan, median / slowest | 0.013 s / 0.196 s | under 2 s |
+| Explore bar drilldown, median | 1.00 s | under 2 s |
+| Data-readiness drilldown listing 4,972 ambiguous times (1.8 MB) | 3.50 s | under 2 s |
+
+**The fix.** The first run took 90.8 s to import. Profiling showed the matching rules compared every pair of tickets on the same date before checking the employees, 35 million label comparisons at this size. They now compare only tickets whose labels can relate: the same once spaces are removed, or joined by a confirmed Alias. Every pair is still checked by the same search-space test. The candidates are identical, in the same order: 153 on the real export, 154 with H's Alias, and 12 on a generated workbook with chained Aliases.
+
+**Still above target:**
+- **Import is 41 s here against a 30 s target.** Most of what remains is openpyxl reading the XML. That includes a second full pass it makes over a sheet with no dimension record, which the real export lacks too. Each cell is also encoded separately for storage. The reference machine may differ from this 4-CPU container.
+- **The ambiguous-times drilldown is 3.5 s.** It lists nearly 5,000 tickets in one response. It is a long listing rather than an ordinary aggregation, and paging it would bring it under target.
+
 ## Logs
 
 The service logs only warnings and never logs requests.
