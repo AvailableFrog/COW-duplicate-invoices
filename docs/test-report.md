@@ -96,18 +96,18 @@ A launch that cannot import the workbook stops before the page exists; `tests/te
 
 ## Layout and screenshots
 
-`layout.spec.ts` checks at 1440 and 1024 CSS pixels that the Overview, the evidence drawer and Explore never scroll sideways, that nothing outside a table's scroll box passes the right edge, and that the source comparison scrolls inside its own box.
+`layout.spec.ts` checks at 1440, 1024 and (since #38) 390 CSS pixels that the Overview, the evidence drawer and Explore never scroll sideways, that nothing outside a table's scroll box passes the right edge, and that the source comparison scrolls inside its own box.
 At 1024 px a long metric identifier in the Value context first pushed past the edge; identifiers in code text now wrap.
 
 Screenshots, written by `LTA_SCREENSHOTS=1 npm --prefix frontend run e2e -- layout`:
 
-| View | 1440 px | 1024 px |
-|---|---|---|
-| Overview | `screenshots/overview-1440.png` | `screenshots/overview-1024.png` |
-| Explore with chips and chart | `screenshots/explore-1440.png` | `screenshots/explore-1024.png` |
-| C's expanded source comparison | `screenshots/source-comparison-1440.png` | `screenshots/source-comparison-1024.png` |
-| Claimed hours by job, with its table (release 1.1) | `screenshots/claimed-hours-1440.png` | `screenshots/claimed-hours-1024.png` |
-| Submission and review timing, with its weekly table (release 1.1) | `screenshots/timing-1440.png` | `screenshots/timing-1024.png` |
+| View | 1440 px | 1024 px | 390 px (release two) |
+|---|---|---|---|
+| Overview | `screenshots/overview-1440.png` | `screenshots/overview-1024.png` | `screenshots/overview-390.png` |
+| Explore with chips and chart | `screenshots/explore-1440.png` | `screenshots/explore-1024.png` | `screenshots/explore-390.png` |
+| C's expanded source comparison | `screenshots/source-comparison-1440.png` | `screenshots/source-comparison-1024.png` | `screenshots/source-comparison-390.png` |
+| Claimed hours by job, with its table (release 1.1) | `screenshots/claimed-hours-1440.png` | `screenshots/claimed-hours-1024.png` | `screenshots/claimed-hours-390.png` |
+| Submission and review timing, with its weekly table (release 1.1) | `screenshots/timing-1440.png` | `screenshots/timing-1024.png` | `screenshots/timing-390.png` |
 
 They show employee records from the committed workbook and stay in this private repository (ADR 0003).
 **Person review:** pending.
@@ -142,6 +142,10 @@ Measured on the environment above:
 **Still above target:**
 - **Import is 41 s here against a 30 s target.** Most of what remains is openpyxl reading the XML. That includes a second full pass it makes over a sheet with no dimension record, which the real export lacks too. Each cell is also encoded separately for storage. The reference machine may differ from this 4-CPU container.
 - **The ambiguous-times drilldown is 3.5 s.** It lists nearly 5,000 tickets in one response. It is a long listing rather than an ordinary aggregation, and paging it would bring it under target.
+
+## Phone width (release two, #38)
+
+`frontend/e2e/phone.spec.ts` runs the three usability tasks at 390 by 844 CSS pixels with touch: investigating C, opening F and H as separate possible duplicates, and building then regrouping the pending-by-supervisor chart. The layout checks run at 390 px too. Two fixes made them pass. The review panel's fields stack in one column and shrink to it, where they had pushed the drawer to 609 px. And the drawer takes the whole screen below 600 px.
 
 ## Logs
 
