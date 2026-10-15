@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from labour_ticket_analytics import __version__
-from labour_ticket_analytics import flagged, processing_queue, value_context
+from labour_ticket_analytics import flagged, pattern_matrix, processing_queue, value_context
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
 from labour_ticket_analytics.metrics import METRICS, Metric, MetricError, registry_payload
@@ -354,16 +354,26 @@ def create_app(state: AppState) -> FastAPI:
         }
 
     @app.get("/api/review-priorities")
-    def review_priorities(query: dict = Depends(filter_query)) -> dict:
+    def review_priorities(
+        query: dict = Depends(filter_query),
+        pattern: list[str] = Query(default=[]),
+        source_state: list[str] = Query(default=[]),
+    ) -> dict:
+        """The ranked possible duplicates under the global and pattern filters, beside the pattern matrix."""
         fingerprint = state.active_fingerprint
         filters = active_filters(fingerprint, query)
+        try:
+            selection = pattern_matrix.PatternFilter.build(patterns=pattern, source_states=source_state)
+        except FilterError as error:
+            raise HTTPException(status_code=422, detail=error.payload()) from error
         saved = state.review.outcomes(fingerprint)
         settled = state.review.settled_pairs(fingerprint)
+        by_pattern = pattern_matrix.review_priorities(
+            state.store.possible_duplicates(fingerprint, filters, settled), selection,
+        )
         return {
-            "possible_duplicates": [
-                with_outcomes(fingerprint, item, saved)
-                for item in state.store.possible_duplicates(fingerprint, filters, settled)
-            ],
+            **by_pattern,
+            "possible_duplicates": [with_outcomes(fingerprint, item, saved) for item in by_pattern["possible_duplicates"]],
             "tiers": [tier.payload() for tier in TIERS],
             "rules": [rule.payload() for rule in RULES.values()],
             "note": REVIEW_PRIORITIES_NOTE,

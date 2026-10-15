@@ -71,10 +71,36 @@ class Rule:
         }
 
 
+@dataclass(frozen=True)
+class Pattern:
+    """One of the PRD section 5 patterns a Candidate can illustrate; several can apply to one possible duplicate."""
+
+    id: str
+    number: int
+    label: str
+
+    def payload(self) -> dict[str, Any]:
+        return {"id": self.id, "number": self.number, "label": self.label}
+
+
+SAME_CLAIM_TWICE = Pattern("same_claim_twice", 1, "Same claim appears twice")
+SAME_CLAIM_AS_DIFFERENT_TEXT = Pattern("same_claim_as_different_text", 2, "Same claim looks different as text")
+CORRECTION_OR_RESUBMISSION = Pattern("correction_or_resubmission", 3, "Possible correction or resubmission")
+EQUAL_DURATION_SEPARATE_PERIODS = Pattern("equal_duration_separate_periods", 4, "Equal duration, separate periods")
+REPEATED_PAYMENT_COMPONENT = Pattern("repeated_payment_component", 5, "Repeated payment component")
+# The patterns a Candidate can carry, in PRD order. Pattern 6 (Service date in description) never links two
+# Tickets on its own, so no Candidate carries it.
+PATTERNS: tuple[Pattern, ...] = (
+    SAME_CLAIM_TWICE, SAME_CLAIM_AS_DIFFERENT_TEXT, CORRECTION_OR_RESUBMISSION, EQUAL_DURATION_SEPARATE_PERIODS,
+    REPEATED_PAYMENT_COMPONENT,
+)
+PATTERN_BY_LABEL: dict[str, Pattern] = {pattern.label: pattern for pattern in PATTERNS}
+
+
 STRICT_REPEAT = Rule(
     id="strict_repeat",
     label="Strict repeat",
-    pattern="Same claim appears twice",
+    pattern=SAME_CLAIM_TWICE.label,
     evidence_strength="strong",
     fields_compared=tuple(STRICT_KEY),
     reason="Same claim submitted twice: employee, date, job, time and all four hour and pay amounts match.",
@@ -82,7 +108,7 @@ STRICT_REPEAT = Rule(
 TIME_TEXT_VARIANT = Rule(
     id="time_text_variant",
     label="Time-text variant",
-    pattern="Same claim looks different as text",
+    pattern=SAME_CLAIM_AS_DIFFERENT_TEXT.label,
     evidence_strength="moderate",
     fields_compared=tuple(STRICT_KEY),
     reason=(
@@ -95,7 +121,7 @@ TIME_TEXT_VARIANT = Rule(
 NAME_SPACE_VARIANT = Rule(
     id="name_space_variant",
     label="Name-space variant",
-    pattern="Same claim looks different as text",
+    pattern=SAME_CLAIM_AS_DIFFERENT_TEXT.label,
     evidence_strength="moderate",
     fields_compared=tuple(STRICT_KEY),
     reason=(
@@ -107,7 +133,7 @@ NAME_SPACE_VARIANT = Rule(
 WORK_PERIOD_CONFLICT = Rule(
     id="work_period_conflict",
     label="Work-period conflict",
-    pattern="Possible correction or resubmission",
+    pattern=CORRECTION_OR_RESUBMISSION.label,
     evidence_strength="moderate",
     fields_compared=("Employee", "Date", "Time"),
     reason=(
@@ -121,7 +147,7 @@ WORK_PERIOD_CONFLICT = Rule(
 AMBIGUOUS_PERIOD_COMPARISON = Rule(
     id="ambiguous_period_comparison",
     label="Ambiguous-period comparison",
-    pattern="Equal duration, separate periods",
+    pattern=EQUAL_DURATION_SEPARATE_PERIODS.label,
     evidence_strength="weak",
     fields_compared=tuple(STRICT_KEY),
     reason=(
@@ -137,7 +163,7 @@ AMBIGUOUS_PERIOD_COMPARISON = Rule(
 FLAGGED_DUPLICATE_COUNTERPART = Rule(
     id="flagged_duplicate_counterpart",
     label="Flagged-duplicate counterpart",
-    pattern="Possible correction or resubmission",
+    pattern=CORRECTION_OR_RESUBMISSION.label,
     evidence_strength="moderate",
     fields_compared=(
         "Employee", "Date", "Regular Hours", "Overtime", "Double Time", "Job Work Pay", "Time",
@@ -154,7 +180,7 @@ FLAGGED_DUPLICATE_COUNTERPART = Rule(
 REPEATED_COMPONENT = Rule(
     id="repeated_component",
     label="Repeated component",
-    pattern="Repeated payment component",
+    pattern=REPEATED_PAYMENT_COMPONENT.label,
     evidence_strength="weak",
     fields_compared=("Employee", "Date", "Job Number", "Job Work Pay"),
     reason=(

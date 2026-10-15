@@ -1317,3 +1317,144 @@ summary:focus-visible {
 .value-reviewed .value-figure {
   border: 2px dashed var(--accent);
 }
+
+/* Review priorities by pattern: the count matrix beside the multi-label pattern filter, stacked when narrow. */
+.pattern-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin: 8px 0 16px;
+}
+
+@media (max-width: 1200px) {
+  .pattern-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.pattern-matrix caption {
+  caption-side: top;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+}
+
+.priorities .pattern-matrix tbody > tr > *,
+.priorities .pattern-matrix tfoot > tr > * {
+  vertical-align: middle;
+}
+
+.priorities .pattern-matrix th[scope="col"]:not(:first-child),
+.priorities .pattern-matrix td {
+  text-align: right;
+}
+
+.priorities .pattern-matrix tbody th[scope="row"],
+.priorities .pattern-matrix tfoot th[scope="row"] {
+  white-space: normal;
+  min-width: 14ch;
+}
+
+.pattern-matrix tfoot th,
+.pattern-matrix tfoot td {
+  border-top: 2px solid var(--line);
+  font-weight: 600;
+}
+
+.matrix-zero {
+  color: var(--muted);
+}
+
+.matrix-count {
+  font: inherit;
+  font-weight: 600;
+  min-width: 2.5em;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--accent);
+  text-align: right;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.matrix-count[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--panel);
+  text-decoration: none;
+}
+
+.matrix-count:focus-visible,
+.pattern-filter input:focus-visible,
+.pattern-filter button:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.matrix-note {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  max-width: 100ch;
+}
+
+.pattern-filter {
+  margin: 0;
+  padding: 8px 14px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 0.9rem;
+}
+
+.pattern-filter legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pattern-filter p {
+  margin: 6px 0;
+}
+
+.pattern-filter ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pattern-filter li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.pattern-filter label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.pattern-totals {
+  padding: 6px 0;
+}
+
+.pattern-showing {
+  margin: 0 0 8px;
+  padding: 6px 12px;
+  border-left: 4px solid var(--accent);
+  background: var(--panel);
+}
+
+.member-states {
+  margin: 0 0 4px;
+}

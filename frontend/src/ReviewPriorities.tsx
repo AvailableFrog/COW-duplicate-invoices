@@ -1,4 +1,5 @@
-import type { Member, PossibleDuplicate, ReviewPrioritiesResponse } from "./api";
+import type { Member, PatternFilterState, PossibleDuplicate, PriorityMember, ReviewPrioritiesResponse } from "./api";
+import { PatternFilter, PatternMatrix } from "./PatternMatrix";
 
 /** The saved Review Outcomes of a possible duplicate's pairs in words; null when none is reviewed. */
 function reviewSummary(item: PossibleDuplicate): string | null {
@@ -17,13 +18,16 @@ export function sourceState(member: Member): string {
   return `${status}, ${keyed}, ${job}`;
 }
 
-function MemberLine({ member }: { member: Member }) {
+function MemberLine({ member, patternFiltered }: { member: PriorityMember; patternFiltered: boolean }) {
   return (
     <li>
       <span className="num">{member.ticket_number ?? "No ticket number"}</span>{" "}
       <span className="muted num">row {member.excel_row}</span> · {sourceState(member)}
       {member.flagged_duplicate ? <span className="tag">Flagged duplicate</span> : null}
       {member.in_filter ? null : <span className="tag tag-muted">Outside the filters</span>}
+      {member.in_filter && patternFiltered && !member.in_selection ? (
+        <span className="tag tag-muted">Outside the pattern filter</span>
+      ) : null}
     </li>
   );
 }
@@ -31,7 +35,15 @@ function MemberLine({ member }: { member: Member }) {
 /** Opens the evidence for a possible duplicate; `opener` gets focus back when the drawer closes. */
 export type OpenEvidence = (item: PossibleDuplicate, opener: HTMLButtonElement) => void;
 
-function PriorityRow({ item, onOpen }: { item: PossibleDuplicate; onOpen: OpenEvidence }) {
+function PriorityRow({
+  item,
+  onOpen,
+  patternFiltered,
+}: {
+  item: PossibleDuplicate;
+  onOpen: OpenEvidence;
+  patternFiltered: boolean;
+}) {
   const review = reviewSummary(item);
   return (
     <tr>
@@ -65,9 +77,15 @@ function PriorityRow({ item, onOpen }: { item: PossibleDuplicate; onOpen: OpenEv
         ) : null}
       </td>
       <td>
+        {item.source_states.length > 1 ? (
+          <p className="member-states">
+            <span className="muted">Mixed source states: </span>
+            {item.source_states.map((state) => `${state.tickets} ${state.label}`).join(" · ")}
+          </p>
+        ) : null}
         <ul className="members">
           {item.members.map((member) => (
-            <MemberLine key={member.excel_row} member={member} />
+            <MemberLine key={member.excel_row} member={member} patternFiltered={patternFiltered} />
           ))}
         </ul>
       </td>
@@ -75,8 +93,23 @@ function PriorityRow({ item, onOpen }: { item: PossibleDuplicate; onOpen: OpenEv
   );
 }
 
-/** The ranked possible duplicates, grouped under their priority tiers. */
-export function ReviewPriorities({ data, onOpen }: { data: ReviewPrioritiesResponse; onOpen: OpenEvidence }) {
+/**
+ * The ranked possible duplicates, grouped under their priority tiers, beside the pattern-by-source-state matrix and
+ * the multi-label pattern filter it feeds.
+ */
+export function ReviewPriorities({
+  data,
+  onOpen,
+  patternFilter,
+  onPatternFilterChange,
+}: {
+  data: ReviewPrioritiesResponse;
+  onOpen: OpenEvidence;
+  patternFilter: PatternFilterState;
+  onPatternFilterChange: (selection: PatternFilterState) => void;
+}) {
+  const stateLabels = new Map(data.pattern_matrix.source_states.map((state) => [state.id, state.label]));
+  const patternFiltered = data.pattern_filter.active;
   const tiers = data.tiers
     .map((tier) => ({ tier, items: data.possible_duplicates.filter((item) => item.tier.rank === tier.rank) }))
     .filter(({ items }) => items.length > 0);
@@ -86,8 +119,27 @@ export function ReviewPriorities({ data, onOpen }: { data: ReviewPrioritiesRespo
         Review priorities
       </h3>
       <p className="muted">{data.note} Open a possible duplicate to see its evidence.</p>
+      <div className="pattern-panel">
+        <PatternMatrix matrix={data.pattern_matrix} current={patternFilter} onSelect={onPatternFilterChange} />
+        <PatternFilter
+          payload={data.pattern_filter}
+          current={patternFilter}
+          stateLabels={stateLabels}
+          onSelect={onPatternFilterChange}
+        />
+      </div>
+      {patternFiltered ? (
+        <p className="pattern-showing">
+          Showing possible duplicates with a ticket matching {data.pattern_filter.description}; every ticket of each
+          stays listed, and those the pattern filter does not count are labelled.
+        </p>
+      ) : null}
       {tiers.length === 0 ? (
-        <p className="status">No possible duplicates have a ticket inside these filters. Widen or clear the filters.</p>
+        <p className="status">
+          {patternFiltered
+            ? "No possible duplicates match this pattern filter inside these filters. Choose other patterns or clear the pattern filter."
+            : "No possible duplicates have a ticket inside these filters. Widen or clear the filters."}
+        </p>
       ) : (
         <div className="table-scroll">
           <table>
@@ -110,7 +162,7 @@ export function ReviewPriorities({ data, onOpen }: { data: ReviewPrioritiesRespo
                   </th>
                 </tr>
                 {items.map((item) => (
-                  <PriorityRow key={item.display_id} item={item} onOpen={onOpen} />
+                  <PriorityRow key={item.display_id} item={item} onOpen={onOpen} patternFiltered={patternFiltered} />
                 ))}
               </tbody>
             ))}
