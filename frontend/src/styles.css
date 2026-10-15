@@ -1585,3 +1585,214 @@ summary:focus-visible {
 .member-states {
   margin: 0 0 4px;
 }
+
+/* Explore: the starting choice, starter questions, chips and result. */
+.explore-intro {
+  max-width: 72ch;
+  margin-top: 0;
+}
+
+.explore-start {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0;
+  padding: 10px 14px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.explore-start legend,
+.chip-filters legend {
+  padding: 0 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.start-choice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.start-choice input:focus-visible,
+.chip input:focus-visible,
+.chip select:focus-visible,
+.chip-filter select:focus-visible,
+.starter:focus-visible,
+.primary-action:focus-visible,
+.explore .secondary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.start-shown {
+  margin: 8px 0 0;
+  font-size: 0.95rem;
+}
+
+.explore-starters h3,
+.explore-result h3 {
+  margin: 20px 0 8px;
+  font-size: 1rem;
+}
+
+.explore-starters ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.starter {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.starter[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.chips {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+
+.chip {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.chip select,
+.chip input[type="number"],
+.chip input[type="date"],
+.chip-filter select {
+  font: inherit;
+  font-size: 0.95rem;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 4px 12px;
+  max-width: 22rem;
+}
+
+.chip input[type="number"] {
+  width: 5.5rem;
+}
+
+.chip-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  font-size: 0.9rem;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+}
+
+.chip-note {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+}
+
+.chip-filters {
+  margin: 0;
+  padding: 6px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.chip-filters ul {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.chip-filters p {
+  margin: 0 0 8px;
+}
+
+.chip-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 8px;
+  margin-bottom: 6px;
+}
+
+.chip-filter select[multiple] {
+  border-radius: 8px;
+  min-height: 5.5rem;
+}
+
+.explore-result {
+  margin-top: 8px;
+  padding: 4px 16px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.explore-summary {
+  margin: 0 0 4px;
+  max-width: 80ch;
+}
+
+.explore-context {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.explore-provenance {
+  margin: 2px 0 6px;
+  font-size: 0.85rem;
+}
+
+.explore-result .chart-data table {
+  min-width: 28rem;
+}
+
+.primary-action {
+  font: inherit;
+  padding: 5px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}

@@ -29,6 +29,7 @@ import {
 import { CompareTickets, type OpenPair } from "./CompareTickets";
 import { DataReadiness, type OpenReadinessAlias, type OpenReadinessTicket } from "./DataReadiness";
 import { EvidenceDrawer, type DrawerTarget } from "./EvidenceDrawer";
+import { Explore } from "./Explore";
 import { ActiveFilters, FilterBar } from "./FilterBar";
 import { FlaggedDuplicates, type OpenFlagged } from "./FlaggedDuplicates";
 import { HeaderTiles } from "./HeaderTiles";
@@ -313,12 +314,16 @@ export function App() {
         </button>
       </nav>
 
-      <FilterBar options={options} filters={filters} onChange={setFilters} />
-      <ActiveFilters filters={tiles?.filters ?? null} grain={tiles?.grain ?? "Ticket"} />
-      {tilesError ? (
-        <p className="notice notice-error" role="alert">
-          The filters could not be applied: {tilesError}. Change them or choose Clear.
-        </p>
+      {tab === "overview" ? (
+        <>
+          <FilterBar options={options} filters={filters} onChange={setFilters} />
+          <ActiveFilters filters={tiles?.filters ?? null} grain={tiles?.grain ?? "Ticket"} />
+          {tilesError ? (
+            <p className="notice notice-error" role="alert">
+              The filters could not be applied: {tilesError}. Change them or choose Clear.
+            </p>
+          ) : null}
+        </>
       ) : null}
 
       <main className="content">
@@ -395,15 +400,15 @@ export function App() {
               <p className="status">Loading the value context…</p>
             )}
           </section>
-        ) : (
-          <section aria-labelledby="explore-heading">
-            <h2 id="explore-heading">Explore</h2>
-            <p className="placeholder">
-              Chart building from metric, grouping, filter, date-basis and chart chips arrives with a later ticket.
-              There is no prompt field in release one.
-            </p>
-          </section>
-        )}
+        ) : state.kind !== "ready" ? (
+          <p className="status">Loading the Snapshot header…</p>
+        ) : null}
+        {/* Kept mounted while the Overview shows, so the starting choice and chips survive a tab switch. */}
+        {state.kind === "ready" ? (
+          <div hidden={tab !== "explore"}>
+            <Explore header={state.header} overviewFilters={filters} />
+          </div>
+        ) : null}
       </main>
       <EvidenceDrawer
         target={drawer}

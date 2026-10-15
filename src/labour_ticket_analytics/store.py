@@ -25,9 +25,9 @@ from typing import Any, Iterable
 
 import duckdb
 
-from labour_ticket_analytics import description_dates, evidence, flagged, metrics, normalized, rules
+from labour_ticket_analytics import description_dates, evidence, flagged, metrics, normalized, plans, rules
 from labour_ticket_analytics.annotations import ANNOTATIONS
-from labour_ticket_analytics.filters import DATE_BASES, Filters
+from labour_ticket_analytics.filters import DATE_BASES, TICKET_FIELDS, Filters
 from labour_ticket_analytics.description_dates import DescriptionDates
 from labour_ticket_analytics.timeparse import TimeParse, parse_time
 from labour_ticket_analytics.validation import APPROVAL_STATUSES, date_value
@@ -540,6 +540,67 @@ class SnapshotStore:
             "statuses": [{"id": status, "tickets": statuses.get(status, 0)} for status in APPROVAL_STATUSES],
             "jobs": [{"job_number": job, "job_name": name, "tickets": count} for job, name, count in jobs],
         }
+
+    def evaluate_plan(
+        self,
+        fingerprint: str,
+        metric: metrics.Metric,
+        filters: Filters,
+        as_of: dt.date,
+        group_by: str | None,
+        replaced_rows: list[int] | tuple[int, ...] = (),
+        window: tuple[dt.date, dt.date] | None = None,
+    ) -> dict[str, Any]:
+        """An Explore plan's metric, with its source rows, evaluated by the registry inside a read-only transaction.
+
+        The plan's values reach the registry's SQL only as parameters; the
+        transaction makes any attempt to write fail rather than succeed.
+        """
+        with self._lock:
+            self.connection.execute("BEGIN TRANSACTION READ ONLY")
+            try:
+                return metrics.evaluate(
+                    self.connection, fingerprint, self.fields(fingerprint), metric, filters, as_of, group_by,
+                    include_rows=True, replaced_rows=replaced_rows, window=window,
+                )
+            finally:
+                self.connection.execute("ROLLBACK")
+
+    def field_values(self, fingerprint: str) -> dict[str, list[dict[str, Any]]]:
+        """Each groupable Ticket field's recorded values with their ticket counts, for the Explore chips.
+
+        A Job Number is labelled with the Job Name most often recorded with it,
+        ties broken A to Z, so the label never depends on row order.
+        """
+        names = self.job_names(fingerprint)
+        values: dict[str, list[dict[str, Any]]] = {}
+        with self._lock:
+            for name, spec in TICKET_FIELDS.items():
+                rows = self.connection.execute(
+                    f"SELECT {spec.column}, count(*) FROM ticket_values WHERE snapshot_fingerprint = ?"
+                    f" AND {spec.column} IS NOT NULL GROUP BY {spec.column} ORDER BY {spec.column}",
+                    [fingerprint],
+                ).fetchall()
+                values[name] = [
+                    {"value": value, "label": plans.group_label(name, value, names), "tickets": count} for value, count in rows
+                ]
+        return values
+
+    def job_names(self, fingerprint: str) -> dict[int, str | None]:
+        """Each Job Number's most often recorded Job Name, ties broken A to Z."""
+        with self._lock:
+            rows = self.connection.execute(
+                """SELECT job_number, job_name FROM (
+                    SELECT job_number, job_name, row_number() OVER (
+                        PARTITION BY job_number ORDER BY count(*) DESC, job_name
+                    ) AS place
+                    FROM ticket_values
+                    WHERE snapshot_fingerprint = ? AND job_number IS NOT NULL AND job_name IS NOT NULL
+                    GROUP BY job_number, job_name
+                ) WHERE place = 1""",
+                [fingerprint],
+            ).fetchall()
+        return dict(rows)
 
     def possible_duplicates(
         self, fingerprint: str, filters: Filters, settled_pairs: set[tuple[int, int]] = frozenset(),

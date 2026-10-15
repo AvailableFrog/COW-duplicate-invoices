@@ -16,21 +16,14 @@ from typing import Any, Literal
 
 import duckdb
 
-from labour_ticket_analytics.filters import DATE_BASES, Filters
+from labour_ticket_analytics.filters import DATE_BASES, TICKET_FIELDS, Filters
 from labour_ticket_analytics.rules import IN_CANDIDATE_SQL, STRICT_KEY, strict_groups_sql
 from labour_ticket_analytics.schema import REQUIRED_COLUMNS
 
 REGISTRY_VERSION = "1.5.0"
 
-# Grouping dimension ID (the source column) -> normalized column.
-DIMENSIONS = {
-    "Approval Status": "status",
-    "Keyed": "keyed",
-    "Job Number": "job_number",
-    "Job Name": "job_name",
-    "Supervisor": "supervisor",
-    "Occupation": "occupation",
-}
+# Grouping dimension ID (the source column) -> normalized column: the Ticket fields filters also accept.
+DIMENSIONS = {name: field.column for name, field in TICKET_FIELDS.items()}
 TICKET_DIMENSIONS = tuple(DIMENSIONS)
 
 CLAIMED_HOURS_SQL = "(t.regular_hours + t.overtime + t.double_time)"
@@ -723,7 +716,9 @@ def evaluate(
     result["value"] = total["value"]
     result["summary"] = total.get("summary")
     if group_by is not None:
-        result["groups"] = _aggregate(connection, metric, scoped_sql, parameters, grouped=True)
+        result["groups"] = _aggregate(
+            connection, metric, scoped_sql, parameters, grouped=True, include_rows=include_rows,
+        )
     if metric.buckets:
         result["buckets"] = _bucket_counts(connection, metric, scoped_sql, parameters)
     result["coverage"] = _coverage(connection, metric, scoped_sql, parameters, total["contributing_tickets"])
@@ -994,8 +989,14 @@ def _scoped(
 
 
 def _aggregate(
-    connection: duckdb.DuckDBPyConnection, metric: Metric, scoped_sql: str, parameters: dict[str, Any], grouped: bool
+    connection: duckdb.DuckDBPyConnection,
+    metric: Metric,
+    scoped_sql: str,
+    parameters: dict[str, Any],
+    grouped: bool,
+    include_rows: bool = False,
 ) -> list[dict[str, Any]]:
+    """The metric's value over all contributing Tickets, or per group; a group can list its Tickets' Excel rows."""
     if metric.aggregation == "count":
         columns = "count(*)"
     elif metric.aggregation == "count_distinct":
@@ -1005,13 +1006,15 @@ def _aggregate(
     else:
         columns = "quantile_cont(metric_value, 0.5), min(metric_value), max(metric_value), avg(metric_value)"
     key = "group_key" if grouped else "NULL"
+    listed = grouped and include_rows
     rows = connection.execute(
-        f"{scoped_sql} SELECT {key} AS key, count(*) AS contributing, {columns}"
+        f"{scoped_sql} SELECT {key} AS key, count(*) AS contributing,"
+        f" {'list(excel_row ORDER BY excel_row)' if listed else 'NULL'} AS excel_rows, {columns}"
         f" FROM scoped WHERE excluded_by IS NULL {'GROUP BY group_key' if grouped else ''}",
         parameters,
     ).fetchall()
     aggregates = []
-    for key_value, contributing, *values in rows:
+    for key_value, contributing, excel_rows, *values in rows:
         if not grouped and contributing == 0:
             continue
         entry: dict[str, Any] = {"contributing_tickets": contributing, "value": _number(values[0])}
@@ -1025,6 +1028,8 @@ def _aggregate(
             }
         if grouped:
             entry = {"key": key_value, **entry}
+        if listed:
+            entry["excel_rows"] = list(excel_rows)
         aggregates.append(entry)
     if grouped:
         aggregates.sort(key=lambda entry: (-(entry["value"] or 0), str(entry["key"])))
