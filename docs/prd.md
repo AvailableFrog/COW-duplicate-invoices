@@ -235,6 +235,7 @@ Do not apply that formula to general overlap components.
 
 Pattern filters are multi-label and must say their counts overlap.
 A distinct-case total uses union case IDs; a distinct-ticket total uses union source IDs.
+The pattern-by-source-state matrix counts distinct in-filter Tickets that a Candidate of the pattern links, one exclusive source state per Ticket, with an Any pattern row counting each Ticket once; a pattern filter selects a possible duplicate when such a Ticket is in it (decision-log entries 64-66).
 Possible duplicates with mixed statuses retain their member-level breakdown instead of being forced into “paid / unpaid.”
 Only reviewed retained/replaced relationships support exclusion from an adjusted claim total.
 

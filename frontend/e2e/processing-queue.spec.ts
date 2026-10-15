@@ -17,7 +17,7 @@ test("a processing-queue bucket opens by keyboard, lists its tickets and opens o
 
   // Keyboard: open View data, then a bucket's button, and focus lands on the listed tickets.
   const viewData = pending.getByText("View data", { exact: true });
-  await tabTo(page, viewData);
+  await tabTo(page, viewData, 300);
   await page.keyboard.press("Enter");
   const bucket = pending.getByRole("button", { name: "Show the 2 Pending tickets aged 7–13 days" });
   await tabTo(page, bucket);

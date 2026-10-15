@@ -10,10 +10,12 @@ import {
   fetchTiles,
   fetchValueContext,
   NO_FILTERS,
+  NO_PATTERN_FILTER,
   reimportWorkbook,
   type FilterOptions,
   type FilterState,
   type FlaggedDuplicatesResponse,
+  type PatternFilterState,
   type HeaderResponse,
   type ProcessingQueueResponse,
   type ReviewPrioritiesResponse,
@@ -47,6 +49,8 @@ export function App() {
   const [tiles, setTiles] = useState<TilesResponse | null>(null);
   const [tilesError, setTilesError] = useState("");
   const [priorities, setPriorities] = useState<ReviewPrioritiesResponse | null>(null);
+  // The multi-label pattern filter narrows only the ranked list; the matrix and every other view ignore it.
+  const [patternFilter, setPatternFilter] = useState<PatternFilterState>(NO_PATTERN_FILTER);
   const [prioritiesError, setPrioritiesError] = useState("");
   const [flagged, setFlagged] = useState<FlaggedDuplicatesResponse | null>(null);
   const [flaggedError, setFlaggedError] = useState("");
@@ -183,7 +187,7 @@ export function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchReviewPriorities(filters, controller.signal)
+    fetchReviewPriorities(filters, patternFilter, controller.signal)
       .then((data) => {
         setPriorities(data);
         setPrioritiesError("");
@@ -193,7 +197,7 @@ export function App() {
         setPrioritiesError(error instanceof Error ? error.message : String(error));
       });
     return () => controller.abort();
-  }, [filters, generation, reviewGeneration]);
+  }, [filters, patternFilter, generation, reviewGeneration]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -297,7 +301,12 @@ export function App() {
                 The review priorities could not be loaded: {prioritiesError}. Change the filters or reload the page.
               </p>
             ) : priorities ? (
-              <ReviewPriorities data={priorities} onOpen={openEvidence} />
+              <ReviewPriorities
+                data={priorities}
+                onOpen={openEvidence}
+                patternFilter={patternFilter}
+                onPatternFilterChange={setPatternFilter}
+              />
             ) : (
               <p className="status">Loading the review priorities…</p>
             )}

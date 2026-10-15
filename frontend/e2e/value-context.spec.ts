@@ -16,7 +16,7 @@ test("the value context is collapsed below the other views and opens by keyboard
   expect(queueBox && panelBox && panelBox.y > queueBox.y + queueBox.height - 1).toBeTruthy();
 
   const disclosure = panel.locator(":scope > details > summary");
-  await tabTo(page, disclosure);
+  await tabTo(page, disclosure, 300);
   await page.keyboard.press("Enter");
 
   const known = panel.getByRole("article", { name: "Known base-value components", exact: true });

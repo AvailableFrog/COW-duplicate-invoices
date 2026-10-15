@@ -153,6 +153,50 @@ export interface PriorityTier {
   label: string;
 }
 
+export type PatternId =
+  | "same_claim_twice"
+  | "same_claim_as_different_text"
+  | "correction_or_resubmission"
+  | "equal_duration_separate_periods"
+  | "repeated_payment_component";
+
+export type SourceStateId =
+  | "approved_keyed"
+  | "approved_not_keyed"
+  | "pending"
+  | "rejected"
+  | "flagged_duplicate"
+  | "unreadable";
+
+/** A PRD section 5 pattern a Candidate can carry. */
+export interface PatternRef {
+  id: PatternId;
+  number: number;
+  label: string;
+}
+
+/** A matrix column: one recorded source state; every Ticket has exactly one. */
+export interface SourceStateDefinition {
+  id: SourceStateId;
+  label: string;
+  definition: string;
+}
+
+/** The pattern filter on Review priorities; empty lists mean any pattern and any state. */
+export interface PatternFilterState {
+  patterns: PatternId[];
+  sourceStates: SourceStateId[];
+}
+
+export const NO_PATTERN_FILTER: PatternFilterState = { patterns: [], sourceStates: [] };
+
+/** A member of a listed possible duplicate: its source state, and whether it is counted under the pattern filter. */
+export interface PriorityMember extends Member {
+  source_state: SourceStateId;
+  /** Inside the global filters, in a selected source state and linked by a selected pattern. */
+  in_selection: boolean;
+}
+
 export interface PossibleDuplicate {
   rank: number;
   /** Derived from the sorted member ticket numbers; a display name, never a storage key. */
@@ -161,9 +205,48 @@ export interface PossibleDuplicate {
   exact_repeat_not_flagged: boolean;
   rule_ids: string[];
   pattern_labels: string[];
+  pattern_ids: PatternId[];
+  /** How many members are in each source state, inside the filters or not. */
+  source_states: { id: SourceStateId; label: string; tickets: number }[];
   summary: string;
-  members: Member[];
+  members: PriorityMember[];
   candidates: Candidate[];
+}
+
+/** Distinct possible duplicates and distinct Tickets; a union, never a sum of overlapping counts. */
+export interface DistinctTotals {
+  possible_duplicates: number;
+  tickets: number;
+}
+
+export interface PatternCount extends PatternRef, DistinctTotals {
+  selected: boolean;
+}
+
+export interface PatternFilterPayload {
+  patterns: PatternId[];
+  source_states: SourceStateId[];
+  active: boolean;
+  description: string;
+  /** Each pattern on its own, under the global filters and the selected source states. */
+  counts: PatternCount[];
+  /** The union over the selected patterns: what the list holds. */
+  totals: DistinctTotals;
+  note: string;
+}
+
+export interface MatrixRow extends DistinctTotals {
+  cells: { source_state: SourceStateId; tickets: number }[];
+}
+
+export interface PatternMatrix {
+  caption: string;
+  note: string;
+  grain: string;
+  source_states: SourceStateDefinition[];
+  rows: (MatrixRow & { pattern: PatternRef })[];
+  /** Each Ticket once, whatever patterns link it. */
+  any_pattern: MatrixRow;
 }
 
 export interface Rule {
@@ -179,6 +262,8 @@ export interface Rule {
 
 export interface ReviewPrioritiesResponse extends Provenance {
   possible_duplicates: PossibleDuplicate[];
+  pattern_filter: PatternFilterPayload;
+  pattern_matrix: PatternMatrix;
   tiers: PriorityTier[];
   rules: Rule[];
   note: string;
@@ -643,8 +728,15 @@ export function fetchTiles(filters: FilterState, signal?: AbortSignal): Promise<
   return getJson<TilesResponse>(`/api/overview/tiles?${filterQuery(filters)}`, signal);
 }
 
-export function fetchReviewPriorities(filters: FilterState, signal?: AbortSignal): Promise<ReviewPrioritiesResponse> {
-  return getJson<ReviewPrioritiesResponse>(`/api/review-priorities?${filterQuery(filters)}`, signal);
+export function fetchReviewPriorities(
+  filters: FilterState,
+  patternFilter: PatternFilterState,
+  signal?: AbortSignal,
+): Promise<ReviewPrioritiesResponse> {
+  const params = new URLSearchParams(filterQuery(filters));
+  for (const pattern of patternFilter.patterns) params.append("pattern", pattern);
+  for (const state of patternFilter.sourceStates) params.append("source_state", state);
+  return getJson<ReviewPrioritiesResponse>(`/api/review-priorities?${params.toString()}`, signal);
 }
 
 /** The evidence for the possible duplicate holding a Ticket, addressed by that Ticket's Snapshot and Excel row. */
