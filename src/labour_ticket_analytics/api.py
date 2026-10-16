@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from labour_ticket_analytics import __version__
 from labour_ticket_analytics import (
     carry_forward, claimed_hours, data_readiness, exports, flagged, pattern_matrix, plans, processing_queue, timing,
-    uploads, value_context, views,
+    questions, uploads, value_context, views,
 )
 from labour_ticket_analytics.annotations import ANNOTATIONS
 from labour_ticket_analytics.filters import DEFAULT_DATE_BASIS, FilterError, Filters
@@ -646,25 +646,33 @@ def create_app(state: AppState) -> FastAPI:
         header, rows = exports.drilldown_csv_rows(listed)
         return csv_response(fingerprint, "source-rows", header, rows)
 
-    @app.post("/api/plans/propose")
-    def propose_plan(body: dict = Body(...)) -> dict:
-        """Ask the provider for a plan; the release-one null provider proposes none, and any plan is validated first."""
+    @app.post("/api/questions")
+    async def ask_question(request: Request, body: dict = Body(...)) -> dict:
+        """Answer a question in words (ticket #42): a validated plan, an Overview view, a clarifying question, an
+        explanation that it cannot be answered, or a failure that says why; nothing unvalidated ever runs.
+
+        `previous_plan` is the plan on screen for a follow-up; without it the
+        question starts fresh, so no earlier filter or date basis carries over.
+        """
+        require_same_origin(request)
         fingerprint = state.active_fingerprint
-        question = body.get("question")
-        if not isinstance(question, str) or not question.strip():
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "question_required", "field": "question", "message": "give a question in words"},
-            )
-        proposal = state.provider.propose(question)
-        validation = None
-        if proposal.plan is not None:
-            validation = validate_plan({"plan": proposal.plan})
+        fields = state.store.fields(fingerprint)
+        try:
+            question = questions.clean_question(body.get("question"))
+        except questions.QuestionError as error:
+            raise HTTPException(status_code=422, detail=error.payload()) from error
+        previous = body.get("previous_plan")
+        if previous is not None:
+            try:
+                plans.validate(previous, fields)
+            except plans.PlanError as error:
+                raise HTTPException(status_code=422, detail={**error.payload(), "field": "previous_plan"}) from error
+        answered = await run_in_threadpool(questions.answer, state.provider, question, previous, fields, state.as_of)
         return {
+            "question": question,
+            "follow_up": previous is not None,
+            "answer": answered,
             "provider": state.provider.payload(),
-            "plan": proposal.plan if validation and validation["valid"] else None,
-            "validation": validation,
-            "message": proposal.message,
             **context(fingerprint),
         }
 

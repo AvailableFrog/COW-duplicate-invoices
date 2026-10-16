@@ -181,6 +181,35 @@ Measured on the environment above:
 
 `frontend/e2e/browser-import.spec.ts` previews and activates a workbook with a missing optional column, with an axe audit of the panel. It also shows a refused workbook's reason and next step with the active Snapshot unchanged.
 
+## Questions in words (release two, #42)
+
+`tests/test_ask_the_data.py` drives the booted application against a scripted stand-in for Ollama (`tests/scripted_model.py`):
+
+- With no model, the answer says how to set one up.
+- A model plan is validated and returned, and the request carries only the model name, the deterministic options, the response schema, the system prompt and the question, with none of the 823 workbook values.
+- A follow-up sends the current plan; a fresh question carries nothing.
+- Views and clarifications come through only as allowed.
+- Eight bad answers each end in an explained failure with nothing run: raw text, a non-object, an unknown kind, an unknown field, an extra SQL field, HTTP 500, an unknown view, and banned wording.
+- Six safety questions are answered by the guards without calling the model.
+- The duplicates clarification offers valid plans; the payment explanation offers the labelled scenario.
+- Bad requests and cross-site requests are refused.
+- A slow model times out at the configured limit and the service stays usable; an unreachable one is explained.
+- A model service off loopback is refused at launch.
+- An injected description never reaches the model.
+- The launch line names the model.
+
+`tests/test_nl_eval.py` checks that the suite has the 14 canonical questions, two paraphrases each and the safety topics, and that every expected plan is valid. A perfect stand-in meets every gate (15/15, 28/28, 19/19) with the PRD's numbers, over two runs with no unstable verdicts. A wrong stand-in is scored case by case. The runner writes JSON and Markdown and refuses an address off loopback.
+
+`frontend/e2e/ask.spec.ts` covers the following:
+
+- A question becomes chips and a chart with its interpretation, with an axe audit, and a follow-up edits it.
+- A payment question opens the value context.
+- The duplicates clarification charts a choice, and a view answer focuses its Overview panel.
+- Invalid output leaves the chips unchanged.
+- Progress, Cancel, and the service's timeout (4 s in the test, 60 s by default) are shown, and the tab stays usable.
+
+The run on a real local model is ticket #43.
+
 ## Logs
 
 The service logs only warnings and never logs requests.
@@ -230,6 +259,6 @@ Every ordinary response is under the 1-second target.
 - **Timings come from a cloud container, not your machine.** The PRD's reference machine is the consultant's own; run `uv run pytest -s tests/test_acceptance_timings.py` there to record its numbers.
 - **Accessibility is automated, not a full audit.** axe-core covers part of WCAG 2.1 AA; no screen-reader session was run. The focus check covers the first 80 stops on the Overview and 40 in the drawer, and the no-green and contrast checks scan the Overview only.
 - **The log check matches known values.** It looks for names of 5 or more characters with a space (or 10 run together), all emails and descriptions of 15 or more characters, so a short description could pass unnoticed. Browser console output and the output of launches refused before listening are not collected; refusal messages name only the file, sheet and columns.
-- **Deferred to release two, as planned:** natural-language questions, the 390 px layout, the 50,000-row performance fixture, request cancellation and timeout, saved views, and carrying review decisions to a new Snapshot.
+- **Release two:** the 390 px layout (#38), the 50,000-row fixture (#37), saved views (#39), carrying review decisions to a new Snapshot (#40), browser import (#41), and natural-language questions with request cancellation and timeout (#42) are built and tested above. The natural-language gate on a real local model is open until ticket #43 runs on a machine that can download model weights.
 - **The export holds no payment records**, so no test can show that anything was paid, stopped or paid twice; the product never claims it.
 

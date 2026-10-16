@@ -1210,7 +1210,7 @@ export interface ExploreCatalogue extends Provenance {
   limits: { min: number; max: number; default: number };
   max_filters: number;
   starters: StarterPlan[];
-  provider: { id: string; label: string; proposes_plans: boolean };
+  provider: ProviderInfo;
 }
 
 export interface PlanIssue {
@@ -1663,4 +1663,57 @@ export async function activateUpload(id: string): Promise<ReimportResponse> {
   const response = await fetch(`/api/uploads/${encodeURIComponent(id)}/activate`, { method: "POST" });
   if (!response.ok) throw await uploadFailure(response);
   return (await response.json()) as ReimportResponse;
+}
+
+/** Ticket #42: the model behind "Ask the data", or none. */
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  proposes_plans: boolean;
+  model: string | null;
+  url?: string;
+  timeout_seconds: number;
+}
+
+export interface AnswerView {
+  id: string;
+  label: string;
+  explanation: string;
+  /** The id of the Overview heading that answers the question. */
+  target: string;
+}
+
+/** A choice offered beside a clarification or an explanation: a plan to chart, a view to open, or words to ask. */
+export interface AnswerOption {
+  label: string;
+  plan?: Plan;
+  view?: AnswerView;
+  answer?: string;
+}
+
+export type QuestionAnswer = { source: "guard" | "model"; elapsed_seconds: number | null } & (
+  | { kind: "plan"; plan: Plan }
+  | { kind: "view"; view: AnswerView }
+  | { kind: "clarify"; clarification: { question: string; options: AnswerOption[] } }
+  | { kind: "unsupported"; unsupported: { topic: string; explanation: string; alternatives: AnswerOption[] } }
+  | { kind: "failed"; failure: { code: string; message: string; issues: PlanIssue[] } }
+);
+
+export interface QuestionResponse extends Provenance {
+  question: string;
+  follow_up: boolean;
+  answer: QuestionAnswer;
+  provider: ProviderInfo;
+}
+
+/** Ask a question in words; `previousPlan` makes it a follow-up to the chart on screen. */
+export async function askQuestion(question: string, previousPlan: Plan | null, signal?: AbortSignal): Promise<QuestionResponse> {
+  const response = await fetch("/api/questions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, previous_plan: previousPlan }),
+    signal,
+  });
+  if (!response.ok) throw await failure(response);
+  return (await response.json()) as QuestionResponse;
 }

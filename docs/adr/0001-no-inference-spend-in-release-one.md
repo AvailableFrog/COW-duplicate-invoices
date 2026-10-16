@@ -10,3 +10,4 @@ This is a prototype for a single consultant preparing for one meeting, and the e
 
 - The provider adapter is built against a null provider so the plan contract and validation are exercised now.
 - The PRD's held-out natural-language evaluation suite moves to release two with the feature.
+- Release two (ticket #42) builds the intended path: an Ollama provider on loopback behind the same adapter, used only when `--model` names a local model, with deterministic guards and validation in front of anything it proposes (decision-log entries 112-117). The cloud development session cannot download model weights, so the evaluation on a real model runs on the consultant's machine (ticket #43).

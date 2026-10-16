@@ -8,7 +8,7 @@ test("the third usability task: pending-by-supervisor bars built from the chips,
   await tabTo(page, tab);
   await page.keyboard.press("Enter");
   const explore = page.getByRole("region", { name: "Explore" });
-  await expect(explore).toContainText("there is no prompt field or model");
+  await expect(explore).toContainText("Ask in words, or build a chart from the chips below.");
   await expect(explore.getByRole("textbox")).toHaveCount(0);
 
   // The starting choice comes first and stays visible; nothing runs until it is made.
@@ -17,6 +17,8 @@ test("the third usability task: pending-by-supervisor bars built from the chips,
   await page.keyboard.press("ArrowDown");
   await expect(explore.getByRole("radio", { name: /Start with all data/ })).toBeChecked();
   await expect(explore).toContainText("Starting from all data. Only the chips below filter the chart.");
+  // With no model configured there is no question field, only how to set one up.
+  await expect(explore.getByRole("region", { name: "Ask the data" })).toContainText("No language model is configured");
 
   const starters = explore.getByRole("region", { name: "Starter questions" }).getByRole("button");
   await expect(starters).toHaveCount(6);
