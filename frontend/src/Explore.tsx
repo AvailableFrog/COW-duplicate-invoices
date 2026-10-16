@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AskTheData } from "./AskTheData";
 import {
   downloadCsv,
   executePlan,
@@ -7,6 +8,7 @@ import {
   fetchExploreCatalogue,
   PlanRejected,
   StaleSnapshot,
+  type AnswerView,
   type ChartTemplateId,
   type DateBasis,
   type DrilldownResult,
@@ -53,6 +55,8 @@ interface ExploreProps {
   onStateChange?: (state: ExploreState | null) => void;
   /** A saved view to open: its plan and starting filters replace the current ones; `nonce` makes a repeat count. */
   requested?: (ExploreState & { nonce: number }) | null;
+  /** Show the Overview panel that answers a question (ticket #42). */
+  onOpenView?: (view: AnswerView) => void;
 }
 
 /** What a saved Explore view holds: the plan and its starting filters (null for "Start with all data"). */
@@ -135,7 +139,7 @@ function conform(plan: Plan, catalogue: ExploreCatalogue, previous: Plan): Plan 
 }
 
 /** The Explore tab: starter questions, editable chips compiled to a validated plan, and its chart and table. */
-export function Explore({ header, overviewFilters, reviewGeneration, onOpenTicket, onStateChange, requested }: ExploreProps) {
+export function Explore({ header, overviewFilters, reviewGeneration, onOpenTicket, onStateChange, requested, onOpenView }: ExploreProps) {
   const [catalogue, setCatalogue] = useState<ExploreCatalogue | null>(null);
   const [catalogueError, setCatalogueError] = useState("");
   const [start, setStart] = useState<Start | null>(null);
@@ -236,8 +240,8 @@ export function Explore({ header, overviewFilters, reviewGeneration, onOpenTicke
     <section aria-labelledby="explore-heading" className="explore">
       <h2 id="explore-heading">Explore</h2>
       <p className="explore-intro">
-        Build a chart from the chips below. Each chip is part of a plan the service checks before running; every number
-        comes from the metric registry, and there is no prompt field or model in this release.
+        Ask in words, or build a chart from the chips below. Either way the chart is a plan of chips the service checks
+        before running, and every number comes from the metric registry, never from a model.
       </p>
 
       <fieldset className="explore-start">
@@ -287,6 +291,13 @@ export function Explore({ header, overviewFilters, reviewGeneration, onOpenTicke
         <p className="status">Loading the Explore choices…</p>
       ) : start === null ? null : (
         <>
+          <AskTheData
+            provider={catalogue.provider}
+            plan={plan}
+            summary={run.kind === "ready" && samePlan(run.result.plan, plan) ? run.result.summary : null}
+            onPlan={setPlan}
+            onOpenView={(view) => onOpenView?.(view)}
+          />
           <Starters catalogue={catalogue} plan={plan} onChoose={setPlan} />
           <Chips catalogue={catalogue} plan={plan} asOf={header.as_of.date} onChange={setPlan} issues={run.kind === "rejected" ? run.issues : []} />
           <ResultPanel

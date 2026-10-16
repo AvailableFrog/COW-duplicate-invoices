@@ -64,6 +64,8 @@ export function App() {
   // Saved views (ticket #39): the Explore tab's current plan, and a saved one to open there.
   const [exploreState, setExploreState] = useState<ExploreState | null>(null);
   const [requestedExplore, setRequestedExplore] = useState<(ExploreState & { nonce: number }) | null>(null);
+  // An Overview heading to move focus to once the Overview shows: where a question in words is answered (#42).
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const [options, setOptions] = useState<FilterOptions | null>(null);
   const [tiles, setTiles] = useState<TilesResponse | null>(null);
   const [tilesError, setTilesError] = useState("");
@@ -195,6 +197,28 @@ export function App() {
       setReimporting(false);
     }
   }
+
+  useEffect(() => {
+    if (!focusTarget || tab !== "overview") return;
+    // The panel may still be loading, and re-renders when its data arrives; keep focus on its heading for a moment,
+    // as long as focus is nowhere else.
+    let first = true;
+    const place = () => {
+      const heading = document.getElementById(focusTarget);
+      const lost = document.activeElement === null || document.activeElement === document.body;
+      if (!heading || (!first && !lost) || heading === document.activeElement) return;
+      const details = heading.closest("details");
+      if (details && !details.open) details.open = true;
+      if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+      if (first) heading.scrollIntoView({ block: "start" });
+      heading.focus();
+      first = false;
+    };
+    place();
+    const timers = [150, 400, 800, 1500].map((delay) => window.setTimeout(place, delay));
+    const done = window.setTimeout(() => setFocusTarget(null), 1600);
+    return () => [...timers, done].forEach((timer) => window.clearTimeout(timer));
+  }, [focusTarget, tab]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -475,6 +499,10 @@ export function App() {
               onOpenTicket={openExploreTicket}
               onStateChange={setExploreState}
               requested={requestedExplore}
+              onOpenView={(view) => {
+                setTab("overview");
+                setFocusTarget(view.target);
+              }}
             />
           </div>
         ) : null}

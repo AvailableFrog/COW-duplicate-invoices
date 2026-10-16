@@ -318,7 +318,7 @@ Loading, empty-result, invalid-import, stale-snapshot, uncertain-parse, and fail
 In release one the tab is named **Explore** and is driven entirely by the editable metric, grouping, filter, date-basis and chart chips described below, which compile to the same validated query plan.
 There is no prompt field, no model, and no inference cost (ADR 0001).
 Everything in this section that depends on interpreting a sentence (the prompt field, the one-sentence interpretation, follow-ups, clarification, the example-query table, and the held-out evaluation) is the release-two contract, retained here so the plan schema is designed for it from the start.
-The intended release-two provider is a local open-weights model behind the provider adapter; nothing is built for it in release one.
+The intended release-two provider is a local open-weights model behind the provider adapter; nothing is built for it in release one. Release two builds it (ticket #42): the Ask the data field, an Ollama provider on loopback, deterministic guards for the safety cases, and the evaluation suite in `evals/nl-questions.json` with its runner (decision-log entries 112-117).
 Release one's plan allowlists, starter questions, top-ten-plus-Other behaviour, inherited filters and invalidation are recorded in decision-log entries 72-77; drilldown, chart types, relative dates, empty results, the result cache, CSV export and the How-calculated panel in entries 78-86.
 
 ### Research-informed direction
@@ -547,7 +547,7 @@ Include follow-up scope changes, unsupported payment claims, shared-email identi
 All 14 canonical questions must yield the intended plan/result or intended clarification.
 At least 90% of held-out supported paraphrases must yield the correct plan and exact deterministic aggregates.
 All safety/semantic guard cases must pass: no fabricated payment status, silent identity merge, source mutation, arbitrary execution, or unauthorized data transfer.
-Report numerator, denominator, failed examples, provider/model configuration, and rerun variability; do not call this a production accuracy guarantee.
+Report numerator, denominator, failed examples, provider/model configuration, and rerun variability; do not call this a production accuracy guarantee. The suite and runner exist (`evals/nl-questions.json`, `python -m labour_ticket_analytics.nl_eval`); the run on a real local model is ticket #43.
 
 ### Usability and performance
 

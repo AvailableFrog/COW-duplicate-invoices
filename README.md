@@ -47,6 +47,9 @@ Options:
 | `--as-of YYYY-MM-DD` | `2026-10-08` | analytical as-of date; the Snapshot is never aged by today's date |
 | `--data-dir PATH` | `.scratch` | where the local review file `review.duckdb` lives, apart from the Snapshot (gitignored); one running copy per directory |
 | `--host ADDR` | `127.0.0.1` | must be a loopback address; anything else is refused |
+| `--model NAME` | none | a local Ollama model that answers [questions in words](#questions-in-words) on the Explore tab; without it the chips still build every chart |
+| `--ollama-url URL` | `http://127.0.0.1:11434` | Ollama's HTTP API; must be on loopback, so nothing leaves the machine |
+| `--model-timeout SECONDS` | `60` | how long a question may wait for the model before it is given up, recoverably |
 
 The Snapshot tables are rebuilt in memory from the workbook on every launch.
 Review Outcomes, kept/replaced links and their history persist across launches in `review.duckdb` in the data directory, described under [Review outcomes](#review-outcomes).
@@ -299,7 +302,7 @@ The Name-space variant proposes that two employee labels name one person, such a
 
 ## Explore
 
-The Explore tab builds an auditable chart from chips, with no prompt field and no model (ADR 0001); the chips compile to the typed query plan of PRD section 7, which the service validates, runs through the metric registry and draws from a trusted template (decision-log entries 72-86).
+The Explore tab builds an auditable chart from chips, or from a [question in words](#questions-in-words) when a local model is configured (ADR 0001); either way the chart is the typed query plan of PRD section 7, which the service validates, runs through the metric registry and draws from a trusted template (decision-log entries 72-86).
 
 - **Starting filters.** On entering the tab the consultant chooses "Use Overview filters" (a copy of the filter bar at that moment) or "Start with all data"; the choice stays visible and nothing runs before it. Inherited filters travel beside the plan, never inside it, and a plan date range under an inherited range is refused rather than guessed.
 - **Starter questions.** Six prefilled chip sets: ticket counts by approval status, approved tickets split by Keyed, pending tickets by supervisor, claimed hours for the ten busiest jobs (Approved, Job Number not 0), Approved, not Keyed tickets by supervisor, and tickets with a missing rate by approval status.
@@ -328,7 +331,7 @@ The Explore tab builds an auditable chart from chips, with no prompt field and n
 | `POST /api/plans/execute` | runs a valid plan through the registry in a read-only transaction. Body: `plan` (the nine fields `metric_id`, `group_by` (one field, `Week` or `Month`, or none), `filters` of `{field, operator, value}`, `date_basis`, `date_range` (`{from, to}`, `{relative}` with `last_7_days`, `last_30_days`, `last_90_days`, `this_month` or `previous_month`, or null), `chart` (`bar_horizontal`, `bar_vertical`, `line`, `histogram`, `scatter`, `table`), `sort`, `limit`, `include_other`), optional `inherited` (the Overview filter bar: `date_basis`, `date_from`, `date_to`, `jobs`, `statuses`; null or absent for all data) and optional `snapshot_fingerprint` (the Snapshot the result is shown for). Returns `plan`, `inherited_filters`, `filters` (with `conditions`), `date_range` (the absolute `from`/`to` with `source`, `label`, `date_basis` and, for a relative range, the `as_of` it resolved against), `metric`, `paired_metric` (a scatterplot's y metric), `title`, `summary`, `grain`, `presentation` (`chart` or `table`), `result` (`form`, `total` (null when empty; tickets for a histogram or scatterplot), `contributing_tickets`, `empty`, `empty_message`, `groups` with `id`, `key`, `label`, `value`, `contributing_tickets`, `excel_rows`, `shown`, `in_other` and a histogram's `bin`; `bars`; `other`; `hidden_groups`; `percentage`; a distribution's `summary` and `bin_width`; a scatterplot's `points`), `chart` (`template` and its Vega-Lite `spec` with inline data; null for a table or an empty result), `lineage` (the metric's lineage and every contributing Excel row), `coverage`, `warnings`, `notes`, `how_calculated` (`formula`, `statistic`, `definition`, `null_treatment`, `exclusion_rules`, `exclusions`, `filters`, `starting_filters`, `date_range`, `presentation`, `source_rows`, `lineage`, `plan`, `inherited_filters`, `template`) and `cache` (`status` `hit` or `miss`, `key`, and the scope: `snapshot_fingerprint`, `as_of`, `registry_version`, `review_revision`). 422 `invalid_plan` with `errors` as above; 409 `stale_snapshot` with `active_snapshot_fingerprint` when another Snapshot is active |
 | `POST /api/plans/drilldown` | the execute body plus `group` (a group, period or bin id from `result.groups`, `__other__`, or null for every ticket in the chart): exactly the tickets the same evaluation counted there, with `plan`, `filters`, `date_range`, `metric`, `group`, `label`, `tickets`, `total` (the count, or the listed values summed for a sum), `chart_total`, `reproduces`, `value_title`, `rows` (each with `excel_row`, `ticket_number`, `employee`, `date`, `created`, `date_approved`, `status`, `keyed`, `job_number`, `job_name`, `supervisor`, `occupation`, the raw `description` and the ticket's `value`; a scatterplot's also `paired_value`) and `cache`. 404 `unknown_group`; 409 `stale_snapshot` as above |
 | `POST /api/plans/table.csv`, `POST /api/plans/drilldown.csv` | the result table (every group, Other and the total) or a drilldown as a CSV download, with the execute or drilldown body. Every cell is quoted, text beginning with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'`, and each row adds `Snapshot`, `As of` and `Registry version`; the JSON responses keep the raw values |
-| `POST /api/plans/propose` | `{"question": "..."}` asked of the plan provider; release one's null provider answers with `plan` null, `validation` null and a `message` pointing to the chips. A proposed plan would be validated before being returned |
+| `POST /api/questions` | `{"question": "...", "previous_plan": plan or null}`: the answer to a question in words, from a guard or the configured model, checked before it is returned (see [Questions in words](#questions-in-words)); with no model, a `failed` answer with code `no_model` saying how to set one up. 422 for an empty or overlong question or an invalid `previous_plan`; same-origin only |
 | `GET /api/overview/processing-queue` | the Processing queue under the filters: two `charts` (`pending_submission_age_days`, `approved_not_keyed_submission_age_days`), each with `title`, `population`, `caption` ("Age since submission"), `measured_on`, `chart` (`bar_horizontal`), `total`, `summary`, `buckets` with counts, `coverage` and `warnings`; plus the `note`, the grain and the filter state |
 | `GET /api/overview/claimed-hours` | the claimed-hours-by-job panel under the filters, with `measure` `claimed_hours` (default) or `ticket_count` (anything else is a 422 `unknown_measure`): `title`, `question`, `note`, `measures`, the `request` (the fixed plan; post it with the same Overview filters as `inherited` to `/api/plans/drilldown` or the CSV routes), the executed `result` exactly as `/api/plans/execute` returns it, and `reviewed`: null unless a kept/replaced link exists, otherwise `label`, `note`, `replaced_tickets`, and its own `request` and `result` from `reviewed_claimed_hours` |
 | `GET /api/overview/submission-timing` | the timing panel under the filters: `question`; `weekly` with `title`, `caption`, `statuses`, `weeks` (each `id`, `label`, `segments` of `{status, tickets}`, `total`), `total`, `other_status_tickets`, `hidden_weeks`, the per-status `series` (each `status`, `request`, `result`) and `all` (`request`, `result`) whose requests drill down by week id; and `lag` and `interval`, each `title`, `note`, `request` and `result` from `/api/plans/execute` |
@@ -401,17 +404,54 @@ The browser tests (`@playwright/test` 1.56.1, Chromium) boot the application the
 Install the browser once with `npx --prefix frontend playwright install chromium`.
 CI (`.github/workflows/ci.yml`) builds the frontend and runs all three on every pull request and on `main`.
 
+## Questions in words
+
+Release two (ticket #42). With `--model`, the Explore tab's **Ask the data** field sends a question to a local open-weights model through Ollama on loopback; a hosted paid API is ruled out (ADR 0001). Without it, the field says how to set one up and the chips work as before.
+
+```sh
+ollama pull qwen2.5:7b-instruct          # any local model Ollama serves; this one is a suggestion, not a tested result
+uv run labour-ticket-analytics "data/Labour Tickets Export.xlsx" --model qwen2.5:7b-instruct
+```
+
+- **What the model may do.** It proposes one JSON answer: a plan, one of six Overview views (exact repeats not flagged, flagged duplicates beside exact repeats, submission timing, data readiness, review priorities, value context), a clarifying question, or "unsupported". It never states a number. A plan is validated against the allowlists like the chips' plan, then compiled and run deterministically; an unknown field, an extra plan field, an unknown view or text no screen may show ends in an explained failure, and nothing runs. The "Interpreted as" sentence is the plan's own summary, never the model's words, and every chip stays editable to correct it.
+- **What it is sent.** The plan contract, the registry's metric definitions, the field allowlists (with the fixed Approval Status and Keyed values), the as-of date, the six starter plans as examples, the current plan for a follow-up, and the question. Never a workbook row, name, email or description, so text inside the export cannot instruct it. Generation is deterministic (temperature 0, a fixed seed).
+- **Guards first.** Some questions never reach the model. A payment question ("paid twice", "money lost") is explained and offered the labelled base-value scenario. A productivity ranking is explained and offered reported hours by job. Merging identities, including by shared email, is left to the reviewer's Alias decision. A request to change, delete or approve data is refused, since the application only reads. "Duplicates" without a kind asks whether flagged, possible or confirmed duplicates are meant. A follow-up with no earlier chart asks for one.
+- **Follow-ups.** After a question sets the chips, **Follow up** sends the chips' current plan with the new words ("only September", "make it a bar chart"); a fresh question carries nothing over, so no job filter or date basis leaks between questions.
+- **Progress, cancel, timeout.** While the model works the field shows the seconds elapsed and a Cancel button. The service gives up after `--model-timeout` (60 seconds by default) and says so; the browser also gives up 5 seconds later. Either way nothing runs and the chips keep the earlier chart.
+- **API.** `POST /api/questions` with `{"question", "previous_plan"}` answers `answer` (`kind` plan, view, clarify, unsupported or failed, its `source` guard or model, and the plan, view, clarification, explanation with alternatives, or failure with its `code` and plan `issues`), the `provider` and the provenance. Same-origin only.
+
+### Evaluation
+
+`evals/nl-questions.json` holds the evaluation suite of PRD section 12:
+
+- the 14 canonical questions, plus the follow-up asked with no earlier chart;
+- two paraphrases of each canonical question;
+- 19 safety cases. Seven of them only a scripted stand-in can produce: invalid output, an unknown field, an extra SQL field, provider failure, an unknown view, text that may not be shown, and a timeout.
+
+Run it against a local model:
+
+```sh
+uv run python -m labour_ticket_analytics.nl_eval --model qwen2.5:7b-instruct --runs 3 --out evals/results/qwen2.5-7b.json
+```
+
+For each group (canonical, paraphrase, safety), the runner reports the numerator, the denominator and whether the gate is met (all, 90% and all). It also reports every failure with its reason, the model and its options, and how verdicts varied across runs. It checks that no prompt held a workbook value and that the workbook was unchanged, and exits non-zero unless the release-two gate is met.
+
+A plan passes when it groups the same way, uses an allowed chart, and computes exactly the expected result on the committed workbook. Its wording does not matter.
+
+`tests/scripted_model.py` is the stand-in the tests use. Scored against it, the runner meets every gate, which shows that the suite's expected answers reproduce the PRD's numbers. A real model's results are recorded under ticket #43.
+
 ## Layout
 
 ```
 src/labour_ticket_analytics/   cli (launch), workbook (import), schema (columns), validation (import issues), normalized (Ticket values for metrics),
-                               metrics (registry), filters (filter state and the field allowlist), plans (Explore query plans: validate, compile, result, drilldown, starters), chart_templates (trusted Vega-Lite bar, line, histogram and scatter templates), result_cache (Explore result cache), exports (protected CSV), providers (plan provider adapter, null provider only), timeparse (interval parser), rules (matching rules, possible duplicates, priority),
+                               metrics (registry), filters (filter state and the field allowlist), plans (Explore query plans: validate, compile, result, drilldown, starters), chart_templates (trusted Vega-Lite bar, line, histogram and scatter templates), result_cache (Explore result cache), exports (protected CSV), providers (plan provider adapter: none, or Ollama on loopback), questions (guards, prompt and checks for questions in words), nl_eval (natural-language evaluation runner), carry_forward (decisions carried to a new Snapshot), uploads (browser import), views (saved views), timeparse (interval parser), rules (matching rules, possible duplicates, priority),
                                evidence (evidence drawer payload), claimed_hours (Claimed hours by job panel), timing (Submission and review timing panel), description_dates (Description-date exception), data_readiness (Data readiness view), pattern_matrix (pattern matrix and pattern filter), flagged (Flagged duplicates view), processing_queue (Processing queue view), value_context (Value context panel), annotations (+ annotations.json, the evidence report's notes),
                                versions, store (DuckDB Snapshot tables), review (local review file: outcomes, links, history), logredact (withholds exception messages from logs), api (HTTP)
 frontend/                      React + TypeScript shell built with Vite into frontend/dist (src: App, FilterBar, HeaderTiles, ReviewPriorities, PatternMatrix,
-                               FlaggedDuplicates, ProcessingQueue, DataReadiness, ClaimedHoursByJob, SubmissionTiming, ValueContext, CompareTickets, EvidenceDrawer, ReviewPanel, Explore; charts/ holds the trusted
+                               FlaggedDuplicates, ProcessingQueue, DataReadiness, ClaimedHoursByJob, SubmissionTiming, ValueContext, CompareTickets, EvidenceDrawer, ReviewPanel, Explore, AskTheData, SavedViews, CarryForward, WorkbookImport; charts/ holds the trusted
                                Vega-Lite templates, the check on the service's templates and their renderer); e2e/ holds the Playwright flows
-tests/                         API tests at the booted-app seam
+tests/                         API tests at the booted-app seam; scripted_model.py is the stand-in for a local model
+evals/                         the natural-language evaluation suite (nl-questions.json)
 data/                          the committed source workbook (private repository, ADR 0003)
 docs/                          PRD, decision log, ADRs, handoff sources, test report, generated metric and rule reference, screenshots
 ```

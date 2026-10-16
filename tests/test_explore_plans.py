@@ -389,12 +389,11 @@ def test_the_catalogue_offers_six_starter_plans_that_each_validate_and_run(app):
 
 def test_the_null_provider_is_wired_and_proposes_no_plan(app):
     catalogue = app.get("/api/explore").json()
-    response = app.client.post("/api/plans/propose", json={"question": "Show pending tickets by supervisor"})
+    response = app.client.post("/api/questions", json={"question": "Show pending tickets by supervisor"})
 
     assert catalogue["provider"]["id"] == "none"
     assert response.status_code == 200
     body = response.json()
     assert body["provider"]["id"] == "none"
-    assert body["plan"] is None
-    assert body["validation"] is None
-    assert "chips" in body["message"]
+    assert body["answer"]["kind"] == "failed" and body["answer"].get("plan") is None
+    assert "chips" in body["answer"]["failure"]["message"]

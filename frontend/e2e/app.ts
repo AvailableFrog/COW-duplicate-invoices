@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -27,9 +27,9 @@ export interface RunningApp {
 }
 
 /** Launch the application on an ephemeral loopback port, as a reviewer would, and wait until it listens. */
-export async function boot(workbook: string): Promise<RunningApp> {
+export async function boot(workbook: string, extra: string[] = []): Promise<RunningApp> {
   const dataDir = mkdtempSync(join(tmpdir(), "lta-e2e-"));
-  const child = spawn(PYTHON, ["-m", "labour_ticket_analytics", workbook, "--port", "0", "--data-dir", dataDir], {
+  const child = spawn(PYTHON, ["-m", "labour_ticket_analytics", workbook, "--port", "0", "--data-dir", dataDir, ...extra], {
     cwd: REPO_ROOT,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -59,6 +59,40 @@ export async function boot(workbook: string): Promise<RunningApp> {
         await exited;
       }
       rmSync(dataDir, { recursive: true, force: true });
+    },
+  };
+}
+
+export interface ScriptedModel {
+  url: string;
+  stop: () => Promise<void>;
+}
+
+/**
+ * Start tests/scripted_model.py: a stand-in for Ollama that answers the evaluation suite's questions as expected,
+ * plus `extra` behaviours by question (`{"answer": ...}`, `{"raw": ...}`, `{"status": 500}`, `{"sleep": seconds}`).
+ */
+export async function startScriptedModel(extra: Record<string, unknown> = {}): Promise<ScriptedModel> {
+  const dir = mkdtempSync(join(tmpdir(), "lta-model-"));
+  const extraPath = join(dir, "extra.json");
+  writeFileSync(extraPath, JSON.stringify(extra));
+  const child = spawn(PYTHON, [join("tests", "scripted_model.py"), "--extra", extraPath], { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] });
+  const url = await new Promise<string>((resolve, reject) => {
+    createInterface({ input: child.stdout }).on("line", (line) => {
+      if (line.startsWith(LISTENING_PREFIX)) resolve(line.slice(LISTENING_PREFIX.length).trim());
+    });
+    child.on("exit", (code) => reject(new Error(`the scripted model exited (${code}) before listening`)));
+    child.on("error", reject);
+  });
+  return {
+    url,
+    stop: async () => {
+      if (child.exitCode === null) {
+        const exited = new Promise((resolve) => child.once("exit", resolve));
+        child.kill();
+        await exited;
+      }
+      rmSync(dir, { recursive: true, force: true });
     },
   };
 }
